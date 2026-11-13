@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config, runTurn, checkMessages, describeError, getClient } from './chat.js';
+import { config, runTurn, checkMessages, describeError, getClient, hasAnthropicCredentials, MISSING_KEY_MESSAGE } from './chat.js';
 import { aiConfig, aiEditEnabled, editWithHuggingFace, checkAiEditBody, describeAiError } from './ai-edit.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,7 +27,7 @@ export function createApp({ anthropic, aiEditor } = {}) {
       ok: true,
       model: config.model,
       effort: config.effort,
-      has_api_key: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
+      has_api_key: Boolean(anthropic) || hasAnthropicCredentials(),
       ai_edit: { enabled: Boolean(editor), model: aiEditor ? 'custom' : aiConfig.model },
     });
   });
@@ -36,6 +36,7 @@ export function createApp({ anthropic, aiEditor } = {}) {
     const messages = req.body?.messages;
     const problem = checkMessages(messages);
     if (problem) return res.status(400).json({ error: problem });
+    if (!anthropic && !hasAnthropicCredentials()) return res.status(500).json({ error: MISSING_KEY_MESSAGE });
     try {
       const result = await runTurn(messages, anthropic ?? getClient(), { aiEdit: Boolean(editor) });
       res.json(result);

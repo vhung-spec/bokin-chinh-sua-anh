@@ -5,6 +5,9 @@
 // một lần cho mỗi request, rồi trả nội dung về trình duyệt.
 
 import Anthropic from '@anthropic-ai/sdk';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { systemPrompt } from './system-prompt.js';
 import { toolDefinitions } from '../shared/tools.js';
 
@@ -70,6 +73,17 @@ export function checkMessages(messages) {
   if (messages.at(-1).role !== 'user') return 'Message cuối cùng phải là của user.';
   return null;
 }
+
+/**
+ * Server có cách xác thực với Claude API không: API key, auth token, hoặc profile của `ant auth login`.
+ * (Khi thiếu, SDK ném một Error thường, không phải lớp lỗi riêng, nên kiểm tra trước để báo lỗi rõ ràng.)
+ */
+export function hasAnthropicCredentials(env = process.env) {
+  if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_PROFILE || env.ANTHROPIC_IDENTITY_TOKEN_FILE) return true;
+  return fs.existsSync(path.join(os.homedir(), '.config', 'anthropic'));
+}
+
+export const MISSING_KEY_MESSAGE = 'Server chưa có API key của Claude. Tạo file .env (xem .env.example), điền ANTHROPIC_API_KEY rồi khởi động lại server.';
 
 let client;
 export function getClient() {

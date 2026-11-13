@@ -13,9 +13,16 @@ const EXAMPLES = {
   rotate_flip_image: [{ angle: 90 }, { flip: 'vertical' }, { angle: -15, flip: 'horizontal' }],
   resize_canvas: [{ padding: 40, fill_color: '#fff' }, { width: 1000, height: 1000, anchor: 'top_left' }],
   adjust_brightness_contrast: [{ brightness: 20 }, { brightness: -10, contrast: 15, layer: 'Ảnh gốc' }],
-  adjust_levels: [{ input_black: 10, input_white: 240, gamma: 1.2 }],
-  adjust_curves: [{ points: [[0, 0], [64, 54], [192, 202], [255, 255]] }],
-  adjust_hue_saturation: [{ saturation: 20 }, { hue: 30, saturation: 40, colorize: true }],
+  adjust_levels: [{ input_black: 10, input_white: 240, gamma: 1.2 }, { channel: 'blue', gamma: 0.9 }],
+  adjust_curves: [
+    { points: [[0, 0], [64, 54], [192, 202], [255, 255]] },
+    { rgb: [[0, 0], [255, 255]], red: [[0, 0], [128, 140], [255, 255]], blue: [[0, 10], [255, 240]] },
+    { green: [[0, 0], [255, 230]] },
+  ],
+  adjust_hue_saturation: [{ saturation: 20 }, { hue: 30, saturation: 40, colorize: true }, { color_range: 'blues', saturation: 25 }],
+  adjust_color_balance: [{ midtones: [10, 0, -15] }, { shadows: [-10, 0, 15], highlights: [10, 0, -15], preserve_luminosity: false }],
+  color_grade: ['cinematic', 'vintage', 'warm', 'cool_moody', 'korean', 'faded_matte', 'bw_dramatic', 'vivid']
+    .flatMap((preset) => [{ preset }, { preset, strength: 100 }]),
   adjust_vibrance: [{ vibrance: 30 }],
   auto_adjust: [{ mode: 'auto_levels' }, { mode: 'auto_contrast' }],
   color_effect: ['grayscale', 'sepia', 'invert', 'warm', 'cool', 'posterize', 'threshold'].map((effect) => ({ effect })),
@@ -87,6 +94,8 @@ test('build báo lỗi rõ ràng khi thiếu tham số bắt buộc theo logic',
   assert.throws(() => TOOL_MAP.get('crop').build({ aspect_ratio: 'vuông' }), /aspect_ratio/);
   assert.throws(() => TOOL_MAP.get('select_area').build({ mode: 'rect' }), /x, y/);
   assert.throws(() => TOOL_MAP.get('adjust_levels').build({ input_black: 200, input_white: 100 }));
+  assert.throws(() => TOOL_MAP.get('adjust_curves').build({}), /đường cong/);
+  assert.throws(() => TOOL_MAP.get('adjust_color_balance').build({}), /midtones/);
 });
 
 test('validate phát hiện lỗi kiểu, enum, giới hạn, tham số lạ, thiếu bắt buộc', () => {
@@ -108,4 +117,13 @@ test('findUnsupportedSyntax nhận ra cú pháp ES6 mà Photopea không chạy �
   assert.ok(findUnsupportedSyntax('app.echoToOE(`a${b}`)').length);
   assert.ok(findUnsupportedSyntax('[1,2].map(function (x) { return x; })').length);
   assert.ok(findUnsupportedSyntax('function f() { return arguments.length; }').length);
+});
+
+test('color_grade: độ mạnh co giãn giá trị, history_steps khớp số bước', () => {
+  const weak = TOOL_MAP.get('color_grade').build({ preset: 'cinematic', strength: 10 });
+  const strong = TOOL_MAP.get('color_grade').build({ preset: 'cinematic', strength: 100 });
+  assert.match(strong, /putInteger\(-18\)/);
+  assert.ok(!weak.includes('putInteger(-18)'));
+  assert.match(strong, /history_steps: 2/);
+  assert.equal((strong.match(/app\.executeAction/g) || []).length, 2);
 });

@@ -34,6 +34,7 @@ export class ToolRunner {
         case 'export_image': return await this._export(input);
         case 'run_script': return await this._runRawScript(input.script);
         case 'ai_edit': return await this._aiEdit(input);
+        case 'select_by_color': return await this._selectByColor(input);
         default: return fail(`Công cụ "${name}" chưa được cài đặt.`);
       }
     } catch (error) {
@@ -45,6 +46,13 @@ export class ToolRunner {
     let result = await this._runWrapped(tool.build(input));
     if (!result.isError && tool.name !== 'get_document_info') this.undoDepth = 0;
     if (!result.isError && tool.settleBounds) result = await this._settleBounds(result);
+    if (!result.isError && tool.name === 'get_document_info') {
+      const data = JSON.parse(result.content);
+      if (data.has_document) {
+        data.selection = await this._selectionBounds();
+        result = ok(JSON.stringify(data));
+      }
+    }
     return result;
   }
 
@@ -157,62 +165,214 @@ __ok({ history_steps: hs.length, now_at_step: idx + 1 });`));
     };
   }
 
+  // ───────────────────────────── Vùng chọn ─────────────────────────────
+
   /**
-   * Chỉnh sửa bằng AI: gửi ảnh (hoặc vùng + ngữ cảnh xung quanh) lên server -> mô hình AI -> đặt kết quả
-   * thành một layer mới đúng vị trí; nếu có region thì thêm mask để chỉ thay vùng đó.
+   * Bounds của vùng chọn hiện tại, hoặc null nếu không có vùng chọn.
+   * Lưu ý: đọc selection.bounds khi KHÔNG có vùng chọn làm Photopea dừng script im lặng,
+   * nên việc kiểm tra phải nằm trong một script riêng.
    */
-  async _aiEdit({ instruction, region, feather = 12 }) {
+  async _selectionBounds() {
+    const r = await this.bridge.exec(
+      "if (app.documents.length) { var __b = app.activeDocument.selection.bounds; app.echoToOE('__SEL__' + __b[0].value + ',' + __b[1].value + ',' + __b[2].value + ',' + __b[3].value); }",
+    );
+    const line = r.echoes.find((e) => e.startsWith('__SEL__'));
+    if (!line) return null;
+    const [x0, y0, x1, y1] = line.slice('__SEL__'.length).split(',').map(Number);
+    if (![x0, y0, x1, y1].every(Number.isFinite) || x1 <= x0 || y1 <= y0) return null;
+    return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+  }
+
+  /** Lưu vùng chọn (giữ nguyên hình dạng, độ mềm mép) vào một layer ẩn, rồi bỏ chọn. */
+  async _saveSelection() {
+    const token = `__bokin_sel_${Math.random().toString(36).slice(2)}`;
+    const r = await this._runWrapped(wrap(`
+var prev = doc.activeLayer;
+var T = doc.artLayers.add();
+T.name = ${JSON.stringify(token)};
+doc.selection.fill(__color('FFFFFF'));
+doc.selection.deselect();
+T.visible = false;
+doc.activeLayer = prev;
+__ok({ bounds: __bounds(T) });`));
+    if (r.isError) return r;
+    return { isError: false, token, bounds: JSON.parse(r.content).bounds };
+  }
+
+  /** Khôi phục vùng chọn từ layer ẩn đã lưu rồi xoá layer đó. */
+  async _restoreSelection(token) {
+    return this._runWrapped(wrap(`
+${loadSelectionCode(token)}
+var T = __findLayer(doc, ${JSON.stringify(token)});
+if (T) { T.remove(); }
+__ok({});`));
+  }
+
+  /** Chọn vùng theo màu: magic wand (Photopea), hoặc theo màu / dải màu (tính trong trình duyệt). */
+  async _selectByColor({ method, x, y, contiguous = true, color, hue_range: hueRange, tolerance = 30, feather = 0 }) {
+    const featherCode = Number(feather) > 0 ? `doc.selection.feather(${Number(feather)});` : '';
+    if (method === 'magic_wand') {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return fail('magic_wand cần x, y (pixel tài liệu).');
+      const r = await this._runWrapped(wrap(`
+var d = new ActionDescriptor(); var ref = new ActionReference(); ref.putProperty(_c('Chnl'), _c('fsel')); d.putReference(_c('null'), ref);
+var p = new ActionDescriptor(); p.putUnitDouble(_c('Hrzn'), _c('#Pxl'), ${Number(x)}); p.putUnitDouble(_c('Vrtc'), _c('#Pxl'), ${Number(y)});
+d.putObject(_c('T   '), _c('Pnt '), p);
+d.putInteger(_c('Tlrn'), ${Math.round(Number(tolerance) * 1.2)}); d.putBoolean(_c('AntA'), true);
+d.putBoolean(_c('Cntg'), ${contiguous ? 'true' : 'false'}); d.putBoolean(_c('Mrgd'), true);
+app.executeAction(_c('setd'), d, DialogModes.NO);
+${featherCode}
+__ok({});`));
+      if (r.isError) return r;
+      this.undoDepth = 0;
+      return this._selectionSummary(method);
+    }
+
+    if (method === 'color' && !color) return fail('method color cần color (#RRGGBB).');
+    if (method === 'hue_range' && !hueRange) return fail('method hue_range cần hue_range.');
     const exported = await this.bridge.exportDocument('png');
     if (!exported) return fail('Chưa có ảnh nào đang mở.');
     const bitmap = await createImageBitmap(new Blob([exported.buffer], { type: 'image/png' }));
     const W = bitmap.width;
     const H = bitmap.height;
-
-    // Vùng gửi cho AI: toàn ảnh, hoặc vùng cần sửa + lề ngữ cảnh 50% mỗi phía.
-    let area = { x: 0, y: 0, width: W, height: H };
-    let mask = null;
-    if (region) {
-      const x0 = clamp(Math.round(region.x), 0, W - 1);
-      const y0 = clamp(Math.round(region.y), 0, H - 1);
-      const x1 = clamp(Math.round(region.x + region.width), x0 + 1, W);
-      const y1 = clamp(Math.round(region.y + region.height), y0 + 1, H);
-      mask = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
-      const margin = Math.round(Math.max(mask.width, mask.height) * 0.5);
-      const ax0 = Math.max(0, x0 - margin);
-      const ay0 = Math.max(0, y0 - margin);
-      area = { x: ax0, y: ay0, width: Math.min(W, x1 + margin) - ax0, height: Math.min(H, y1 + margin) - ay0 };
-    }
-    const scale = Math.min(1, 1536 / Math.max(area.width, area.height));
+    // Mask tính ở độ phân giải tối đa 2048px rồi Photopea phóng lên đúng kích thước (mép mềm, đủ chính xác).
+    const scale = Math.min(1, 2048 / Math.max(W, H));
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(area.width * scale));
-    canvas.height = Math.max(1, Math.round(area.height * scale));
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(bitmap, area.x, area.y, area.width, area.height, 0, 0, canvas.width, canvas.height);
+    canvas.width = Math.max(1, Math.round(W * scale));
+    canvas.height = Math.max(1, Math.round(H * scale));
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close();
-    const sent = canvas.toDataURL('image/png');
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const weight = method === 'color' ? colorWeight(color, tolerance) : hueWeight(hueRange, tolerance);
+    let total = 0;
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3] === 0 ? 0 : weight(d[i], d[i + 1], d[i + 2]);
+      total += a;
+      d[i] = d[i + 1] = d[i + 2] = 255;
+      d[i + 3] = Math.round(a * 255);
+    }
+    const coverage = total / (canvas.width * canvas.height);
+    if (coverage < 0.0005) return fail('Không có vùng nào khớp màu này. Thử tăng tolerance hoặc chọn màu khác.');
+    ctx.putImageData(img, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 
-    const res = await fetch('/api/ai-edit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: sent.slice(sent.indexOf(',') + 1), mime_type: 'image/png', instruction }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return fail(data.error || `Server trả lỗi HTTP ${res.status}`);
-
-    const layerName = `AI: ${instruction}`.slice(0, 60);
-    const placed = await this._placeImageAsLayer(base64ToBuffer(data.image), area, layerName, mask, feather);
-    this.undoDepth = 0;
+    const prev = await this.bridge.exec('if (app.documents.length) { app.echoToOE(app.activeDocument.activeLayer.name); }');
+    const prevName = prev.echoes[0];
+    const token = `__bokin_mask_${Math.random().toString(36).slice(2)}`;
+    const placed = await this._placeImageAsLayer(await blob.arrayBuffer(), { x: 0, y: 0, width: W, height: H }, token, { hidden: true });
     if (placed.isError) return placed;
+    const r = await this._runWrapped(wrap(`
+${loadSelectionCode(token)}
+var T = __findLayer(doc, ${JSON.stringify(token)});
+if (T) { T.remove(); }
+var P = __findLayer(doc, ${JSON.stringify(prevName ?? '')});
+if (P) { doc.activeLayer = P; }
+${featherCode}
+__ok({});`));
+    if (r.isError) return r;
+    this.undoDepth = 0;
+    return this._selectionSummary(method, Math.round(coverage * 1000) / 10);
+  }
+
+  async _selectionSummary(method, coveragePercent) {
+    const bounds = await this._selectionBounds();
+    if (!bounds) return fail('Không chọn được vùng nào (thử tăng tolerance hoặc chọn điểm khác).');
     return ok(JSON.stringify({
-      ...JSON.parse(placed.content),
-      sent_area: area,
-      note: 'Kết quả AI nằm ở layer mới phía trên; ảnh gốc vẫn ở bên dưới. Hãy kiểm tra bằng view_image.',
+      method,
+      selection_bounds: bounds,
+      ...(coveragePercent !== undefined ? { coverage_percent: coveragePercent } : {}),
+      note: 'Vùng chọn đang hoạt động: các chỉnh sửa tiếp theo chỉ áp dụng trong vùng này.',
     }));
   }
 
-  /** Mở ảnh như tài liệu tạm, chép layer sang tài liệu đang làm việc, co giãn vào `area`, thêm mask nếu có. */
-  async _placeImageAsLayer(buffer, area, layerName, mask, feather) {
+  // ───────────────────────────── AI tạo ảnh ─────────────────────────────
+
+  /**
+   * Chỉnh sửa bằng AI (giống Generative Fill): gửi ảnh (hoặc vùng + ngữ cảnh) lên server -> mô hình AI ->
+   * đặt mỗi kết quả thành một layer mới đúng vị trí, có mask theo vùng chọn / region.
+   */
+  async _aiEdit({ instruction, use_selection: useSelection, region, feather = 12, variations = 1 }) {
+    let saved = null;
+    if (useSelection) {
+      if (!(await this._selectionBounds())) {
+        return fail('Không có vùng chọn nào trong Photopea. Hãy nhờ người dùng khoanh vùng (công cụ Lasso / Marquee / Quick Selection), hoặc dùng region.');
+      }
+      saved = await this._saveSelection();
+      if (saved.isError) return saved;
+    }
+    try {
+      const exported = await this.bridge.exportDocument('png');
+      if (!exported) return fail('Chưa có ảnh nào đang mở.');
+      const bitmap = await createImageBitmap(new Blob([exported.buffer], { type: 'image/png' }));
+      const W = bitmap.width;
+      const H = bitmap.height;
+
+      // Vùng cần sửa (target) và vùng gửi cho AI (area = target + lề ngữ cảnh 50% mỗi phía).
+      let target = null;
+      let maskRect = null;
+      if (saved) target = clampRect(saved.bounds, W, H);
+      else if (region) target = maskRect = clampRect(region, W, H);
+      let area = { x: 0, y: 0, width: W, height: H };
+      if (target) {
+        const margin = Math.round(Math.max(target.width, target.height) * 0.5);
+        const ax0 = Math.max(0, target.x - margin);
+        const ay0 = Math.max(0, target.y - margin);
+        area = {
+          x: ax0, y: ay0,
+          width: Math.min(W, target.x + target.width + margin) - ax0,
+          height: Math.min(H, target.y + target.height + margin) - ay0,
+        };
+      }
+      const scale = Math.min(1, 1536 / Math.max(area.width, area.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(area.width * scale));
+      canvas.height = Math.max(1, Math.round(area.height * scale));
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, area.x, area.y, area.width, area.height, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const sent = canvas.toDataURL('image/png');
+      const image = sent.slice(sent.indexOf(',') + 1);
+
+      // Các phương án chạy song song.
+      const n = Math.min(3, Math.max(1, variations));
+      const settled = await Promise.allSettled(Array.from({ length: n }, () => requestAiEdit(image, instruction)));
+      const results = settled.filter((x) => x.status === 'fulfilled').map((x) => x.value);
+      if (!results.length) return fail(settled[0].reason?.message ?? 'Dịch vụ AI lỗi.');
+
+      const layers = [];
+      for (const [i, buffer] of results.entries()) {
+        const name = (results.length > 1 ? `AI ${i + 1}/${results.length}: ${instruction}` : `AI: ${instruction}`).slice(0, 60);
+        const placed = await this._placeImageAsLayer(buffer, area, name, {
+          maskRect, feather, maskLayer: saved?.token, hidden: i > 0,
+        });
+        if (placed.isError) return placed;
+        layers.push(JSON.parse(placed.content).layer);
+      }
+      this.undoDepth = 0;
+      return ok(JSON.stringify({
+        layers,
+        visible_layer: layers[0],
+        sent_area: area,
+        masked_to: saved ? 'selection' : maskRect,
+        ...(results.length < n ? { failed_variations: n - results.length } : {}),
+        note: layers.length > 1
+          ? 'Mỗi phương án là một layer; chỉ layer đầu đang hiện. Ảnh gốc vẫn ở bên dưới. Kiểm tra bằng view_image.'
+          : 'Kết quả AI nằm ở layer mới phía trên; ảnh gốc vẫn ở bên dưới. Kiểm tra bằng view_image.',
+      }));
+    } finally {
+      // Trả lại vùng chọn của người dùng (giống Photoshop: vùng chọn vẫn còn sau Generative Fill).
+      if (saved) await this._restoreSelection(saved.token);
+    }
+  }
+
+  /**
+   * Mở ảnh như tài liệu tạm, chép layer sang tài liệu đang làm việc, co giãn vào `area`.
+   * options.maskRect: chỉ giữ vùng chữ nhật này (mép mềm = feather); options.maskLayer: mask theo độ trong suốt
+   * của layer đó (vùng chọn đã lưu); options.hidden: ẩn layer sau khi đặt.
+   */
+  async _placeImageAsLayer(buffer, area, layerName, { maskRect = null, feather = 0, maskLayer = null, hidden = false } = {}) {
     const token = `__bokin_${Math.random().toString(36).slice(2)}`;
     // Đánh dấu tài liệu đích bằng tên tạm (đổi tên không tạo bước lịch sử).
     const mark = await this.bridge.exec(`app.echoToOE(app.activeDocument.name); app.activeDocument.name = ${JSON.stringify(token)};`);
@@ -223,18 +383,25 @@ __ok({ history_steps: hs.length, now_at_step: idx + 1 });`));
       await this.bridge.exec(`app.activeDocument.name = ${JSON.stringify(originalName)};`);
       return fail('Photopea không mở được ảnh do AI trả về.');
     }
-    const maskScript = mask
-      ? `dst.selection.select(${rectPoints(mask.x, mask.y, mask.width, mask.height)}, SelectionType.REPLACE, ${Number(feather) || 0});
-var md = new ActionDescriptor(); var mr = new ActionReference(); mr.putEnumerated(_c('Chnl'), _c('Chnl'), _c('Msk '));
+    const makeMask = `var md = new ActionDescriptor(); var mr = new ActionReference(); mr.putEnumerated(_c('Chnl'), _c('Chnl'), _c('Msk '));
 md.putClass(_c('Nw  '), _c('Chnl')); md.putReference(_c('At  '), mr); md.putEnumerated(_c('Usng'), _c('UsrM'), _c('RvlS'));
 app.executeAction(_c('Mk  '), md, DialogModes.NO);
-dst.selection.deselect();`
-      : '';
+dst.selection.deselect();`;
+    let maskScript = '';
+    if (maskLayer) maskScript = `${loadSelectionCode(maskLayer)}\n${makeMask}`;
+    else if (maskRect) {
+      maskScript = `dst.selection.select(${rectPoints(maskRect.x, maskRect.y, maskRect.width, maskRect.height)}, SelectionType.REPLACE, ${Number(feather) || 0});\n${makeMask}`;
+    }
     const result = await this._runWrapped(wrap(`
 var src = app.activeDocument;
 var dst = null;
 for (var i = 0; i < app.documents.length; i++) { if (app.documents[i].name === ${JSON.stringify(token)}) { dst = app.documents[i]; } }
 if (!dst) { __fail('Không tìm thấy tài liệu đích.'); return; }
+// bounds của layer chỉ bao phần KHÔNG trong suốt, nên co giãn theo kích thước tài liệu nguồn
+// và giữ nguyên độ lệch của phần nội dung (quan trọng với ảnh mask có vùng trong suốt).
+var sW = __num(src.width), sH = __num(src.height);
+var sb = __bounds(src.activeLayer);
+var kx = ${area.width} / sW, ky = ${area.height} / sH;
 // Layer chép sang được đặt ngay trên layer đang chọn của tài liệu đích, mang tên mặc định
 // ("Layer 1"...) và trở thành layer đang chọn, nên lấy nó qua activeLayer.
 src.activeLayer.duplicate(dst);
@@ -244,13 +411,13 @@ dst.name = ${JSON.stringify(originalName)};
 var L = dst.activeLayer;
 if (!L) { __fail('Không chép được layer kết quả.'); return; }
 if (dst.layers[0].name !== L.name) { L.move(dst.layers[0], ElementPlacement.PLACEBEFORE); }
+if (kx !== 1 || ky !== 1) { L.resize(kx * 100, ky * 100, AnchorPosition.TOPLEFT); }
 var b = __bounds(L);
-L.resize(${area.width} / b.width * 100, ${area.height} / b.height * 100, AnchorPosition.TOPLEFT);
-b = __bounds(L);
-L.translate(${area.x} - b.x, ${area.y} - b.y);
+L.translate(${area.x} + sb.x * kx - b.x, ${area.y} + sb.y * ky - b.y);
 L.name = ${JSON.stringify(layerName)};
 ${maskScript}
-__ok({ layer: L.name, bounds: __bounds(L), masked_to: ${mask ? JSON.stringify(mask) : 'null'} });`, { needsDocument: false }));
+${hidden ? 'L.visible = false;' : ''}
+__ok({ layer: L.name, bounds: __bounds(L) });`, { needsDocument: false }));
     if (result.isError) {
       // Dọn dẹp: trả lại tên tài liệu gốc nếu còn mang tên tạm.
       await this.bridge.exec(`for (var i = 0; i < app.documents.length; i++) { if (app.documents[i].name === ${JSON.stringify(token)}) { app.documents[i].name = ${JSON.stringify(originalName)}; } }`);
@@ -271,6 +438,69 @@ __ok({ layer: L.name, bounds: __bounds(L), masked_to: ${mask ? JSON.stringify(ma
     }
     return ok(r.echoes.length ? r.echoes.join('\n') : 'Script chạy xong (không có output).');
   }
+}
+
+/** Đoạn script nạp vùng chọn từ độ trong suốt (alpha) của layer có tên cho trước. */
+function loadSelectionCode(layerName) {
+  return `var __sd = new ActionDescriptor(); var __sr = new ActionReference(); __sr.putProperty(_c('Chnl'), _c('fsel')); __sd.putReference(_c('null'), __sr);
+var __st = new ActionReference(); __st.putEnumerated(_c('Chnl'), _c('Chnl'), _c('Trsp')); __st.putName(_c('Lyr '), ${JSON.stringify(layerName)}); __sd.putReference(_c('T   '), __st);
+app.executeAction(_c('setd'), __sd, DialogModes.NO);`;
+}
+
+/** Gọi /api/ai-edit; trả về ArrayBuffer ảnh kết quả hoặc ném lỗi có thông báo tiếng Việt. */
+async function requestAiEdit(image, instruction) {
+  const res = await fetch('/api/ai-edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image, mime_type: 'image/png', instruction }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Server trả lỗi HTTP ${res.status}`);
+  return base64ToBuffer(data.image);
+}
+
+function clampRect(r, W, H) {
+  const x0 = clamp(Math.round(r.x), 0, W - 1);
+  const y0 = clamp(Math.round(r.y), 0, H - 1);
+  const x1 = clamp(Math.round(r.x + r.width), x0 + 1, W);
+  const y1 = clamp(Math.round(r.y + r.height), y0 + 1, H);
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+const smooth = (lo, hi, v) => (v <= lo ? 0 : v >= hi ? 1 : (v - lo) / (hi - lo));
+
+/** Trọng số chọn (0..1) theo khoảng cách màu RGB tới màu đích. */
+function colorWeight(color, tolerance) {
+  const h = String(color).replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const [tr, tg, tb] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  const maxD = Math.max(4, tolerance * 2.2);
+  const inner = maxD * 0.6;
+  return (r, g, b) => {
+    const dist = Math.hypot(r - tr, g - tg, b - tb);
+    return dist <= inner ? 1 : dist >= maxD ? 0 : (maxD - dist) / (maxD - inner);
+  };
+}
+
+/** Trọng số chọn (0..1) theo họ màu (hue), bỏ qua vùng xám / quá tối. */
+function hueWeight(range, tolerance) {
+  const center = { reds: 0, yellows: 60, greens: 120, cyans: 180, blues: 240, magentas: 300 }[range];
+  const half = 15 + tolerance * 0.6;
+  const ramp = 15;
+  return (r, g, b) => {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+    if (delta === 0 || max === 0) return 0;
+    let hue;
+    if (max === r) hue = ((g - b) / delta) % 6;
+    else if (max === g) hue = (b - r) / delta + 2;
+    else hue = (r - g) / delta + 4;
+    hue = (hue * 60 + 360) % 360;
+    const dh = Math.min(Math.abs(hue - center), 360 - Math.abs(hue - center));
+    const wHue = dh <= half ? 1 : dh >= half + ramp ? 0 : (half + ramp - dh) / ramp;
+    return wHue * smooth(0.1, 0.25, delta / max) * smooth(15, 40, max);
+  };
 }
 
 function clamp(v, lo, hi) {

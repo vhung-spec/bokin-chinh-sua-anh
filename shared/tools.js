@@ -14,6 +14,7 @@
 // applyUnSharpMask, threshold, posterize...) chạy không báo lỗi nhưng KHÔNG đổi pixel.
 
 import { wrap, lit, num, hex, hexToRgb, targetLayer, rectPoints, ellipsePoints } from './script-kit.js';
+import { amCurves, amLevels, amColorBalance, amHueSaturation, amVibrance, COLOR_PRESETS, COLOR_RANGES } from './color.js';
 
 const LAYER_PARAM = {
   type: 'string',
@@ -39,6 +40,17 @@ const BLEND_MODES = {
 };
 
 const has = (v) => v !== undefined && v !== null && v !== '';
+
+const CURVE_PARAM = (description) => ({
+  type: 'array', minItems: 2, maxItems: 16, description,
+  items: { type: 'array', items: { type: 'number', minimum: 0, maximum: 255 }, minItems: 2, maxItems: 2 },
+});
+
+const BALANCE_PARAM = (description) => ({
+  type: 'array', minItems: 3, maxItems: 3,
+  description: `${description} [cyan↔red, magenta↔green, yellow↔blue], mỗi giá trị -100..100.`,
+  items: { type: 'integer', minimum: -100, maximum: 100 },
+});
 
 /** Đoạn Action Manager: Photo Filter (làm ấm/lạnh/sepia) với màu + mật độ. */
 function photoFilter(colorHex, density) {
@@ -328,11 +340,13 @@ __ok({ layer: layer.name, brightness: ${num(brightness)}, contrast: ${num(contra
     label: 'Chỉnh Levels',
     kind: 'script',
     description:
-      'Levels adjustment on a pixel layer: remap input black/white points and midtone gamma. ' +
-      'Raise input_black to deepen shadows, lower input_white to brighten highlights, gamma > 1 brightens midtones.',
+      'Levels on a pixel layer, for the combined image (channel "rgb") or one color channel. Raise input_black to deepen ' +
+      'shadows, lower input_white to brighten highlights, gamma > 1 brightens midtones. On a single channel it shifts color, ' +
+      'e.g. channel "blue" with gamma 0.9 makes the image warmer.',
     input_schema: {
       type: 'object',
       properties: {
+        channel: { type: 'string', enum: ['rgb', 'red', 'green', 'blue'], description: 'Mặc định rgb.' },
         input_black: { type: 'integer', minimum: 0, maximum: 253 },
         input_white: { type: 'integer', minimum: 2, maximum: 255 },
         gamma: { type: 'number', minimum: 0.1, maximum: 9.99 },
@@ -342,17 +356,11 @@ __ok({ layer: layer.name, brightness: ${num(brightness)}, contrast: ${num(contra
       },
       additionalProperties: false,
     },
-    build({ input_black = 0, input_white = 255, gamma = 1, output_black = 0, output_white = 255, layer }) {
+    build({ channel = 'rgb', input_black = 0, input_white = 255, gamma = 1, output_black = 0, output_white = 255, layer }) {
       if (Number(input_black) >= Number(input_white)) throw new Error('input_black phải nhỏ hơn input_white.');
       return wrap(`${targetLayer(layer, { requirePixels: true })}
-var d = new ActionDescriptor(); var list = new ActionList(); var a = new ActionDescriptor();
-var ch = new ActionReference(); ch.putEnumerated(_c('Chnl'), _c('Chnl'), _c('Cmps')); a.putReference(_c('Chnl'), ch);
-var inp = new ActionList(); inp.putInteger(${num(input_black)}); inp.putInteger(${num(input_white)}); a.putList(_c('Inpt'), inp);
-a.putDouble(_c('Gmm '), ${num(gamma)});
-var outp = new ActionList(); outp.putInteger(${num(output_black)}); outp.putInteger(${num(output_white)}); a.putList(_c('Otpt'), outp);
-list.putObject(_c('LvlA'), a); d.putList(_c('Adjs'), list);
-app.executeAction(_c('Lvls'), d, DialogModes.NO);
-__ok({ layer: layer.name });`);
+${amLevels({ channel, inputBlack: input_black, inputWhite: input_white, gamma, outputBlack: output_black, outputWhite: output_white })}
+__ok({ layer: layer.name, channel: ${lit(channel)} });`);
     },
   },
   {
@@ -360,34 +368,29 @@ __ok({ layer: layer.name });`);
     label: 'Chỉnh Curves',
     kind: 'script',
     description:
-      'Curves adjustment on the composite (RGB) channel of a pixel layer. Points are [input, output] pairs in 0..255, ' +
-      'sorted by input; include [0,0] and [255,255] unless you want to clip. Gentle S-curve for contrast: ' +
-      '[[0,0],[64,54],[192,202],[255,255]].',
+      'Curves on a pixel layer: `rgb` for overall tone/contrast and/or `red`, `green`, `blue` for color grading, all in ' +
+      'one step. Each is a list of [input, output] points in 0..255; include [0,0] and [255,255] unless you want to ' +
+      'lift/clip. Gentle S-curve for contrast: rgb [[0,0],[64,54],[192,202],[255,255]]. Color examples: warmer highlights ' +
+      '= blue [[0,0],[192,180],[255,240]]; teal shadows = red [[0,0],[64,54],[255,255]] + blue [[0,0],[64,76],[255,255]].',
     input_schema: {
       type: 'object',
       properties: {
-        points: {
-          type: 'array', minItems: 2, maxItems: 16,
-          items: { type: 'array', items: { type: 'number', minimum: 0, maximum: 255 }, minItems: 2, maxItems: 2 },
-        },
+        rgb: CURVE_PARAM('Đường cong cho cả ảnh (độ sáng/tương phản).'),
+        red: CURVE_PARAM('Đường cong kênh đỏ.'),
+        green: CURVE_PARAM('Đường cong kênh xanh lá.'),
+        blue: CURVE_PARAM('Đường cong kênh xanh dương.'),
+        points: CURVE_PARAM('Tên cũ của `rgb` (giữ để tương thích).'),
         layer: LAYER_PARAM,
       },
-      required: ['points'],
       additionalProperties: false,
     },
-    build({ points, layer }) {
-      const pts = [...points].sort((p, q) => p[0] - q[0]);
-      const putPoints = pts
-        .map(([i, o]) => `p = new ActionDescriptor(); p.putDouble(_c('Hrzn'), ${num(i)}); p.putDouble(_c('Vrtc'), ${num(o)}); pts.putObject(_c('Pnt '), p);`)
-        .join('\n');
+    build({ rgb, red, green, blue, points, layer }) {
+      const curves = { rgb: rgb ?? points, red, green, blue };
+      const used = Object.keys(curves).filter((k) => curves[k]);
+      if (!used.length) throw new Error('Cần ít nhất một đường cong: rgb, red, green hoặc blue.');
       return wrap(`${targetLayer(layer, { requirePixels: true })}
-var d = new ActionDescriptor(); var list = new ActionList(); var a = new ActionDescriptor();
-var ch = new ActionReference(); ch.putEnumerated(_c('Chnl'), _c('Chnl'), _c('Cmps')); a.putReference(_c('Chnl'), ch);
-var pts = new ActionList(); var p;
-${putPoints}
-a.putList(_c('Crv '), pts); list.putObject(_c('CrvA'), a); d.putList(_c('Adjs'), list);
-app.executeAction(_c('Crvs'), d, DialogModes.NO);
-__ok({ layer: layer.name, points: ${pts.length} });`);
+${amCurves(curves)}
+__ok({ layer: layer.name, channels: ${lit(used.join(','))} });`);
     },
   },
   {
@@ -395,11 +398,14 @@ __ok({ layer: layer.name, points: ${pts.length} });`);
     label: 'Chỉnh màu / độ bão hoà',
     kind: 'script',
     description:
-      'Hue/Saturation on a pixel layer. saturation -100 makes it gray, +20..40 makes colors more vivid. ' +
-      'With colorize=true the layer is tinted with one hue (hue 0..360, e.g. 30 = sepia-ish, 200 = blue).',
+      'Hue/Saturation on a pixel layer, for all colors or only one color range (reds, yellows, greens, cyans, blues, ' +
+      'magentas) — e.g. make only the sky bluer (blues: saturation +25), calm red skin (reds: saturation -15), turn green ' +
+      'leaves autumn-orange (greens: hue -40). saturation -100 = gray, +20..40 = more vivid. hue shifts colors in degrees. ' +
+      'colorize=true tints everything with one hue (hue 0..360; 30 = sepia, 200 = blue); color_range is ignored then.',
     input_schema: {
       type: 'object',
       properties: {
+        color_range: { type: 'string', enum: COLOR_RANGES, description: 'Dải màu áp dụng, mặc định all.' },
         hue: { type: 'integer', minimum: -180, maximum: 360 },
         saturation: { type: 'integer', minimum: -100, maximum: 100 },
         lightness: { type: 'integer', minimum: -100, maximum: 100 },
@@ -408,13 +414,36 @@ __ok({ layer: layer.name, points: ${pts.length} });`);
       },
       additionalProperties: false,
     },
-    build({ hue = 0, saturation = 0, lightness = 0, colorize = false, layer }) {
+    build({ color_range = 'all', hue = 0, saturation = 0, lightness = 0, colorize = false, layer }) {
       return wrap(`${targetLayer(layer, { requirePixels: true })}
-var d = new ActionDescriptor(); d.putBoolean(_c('Clrz'), ${colorize ? 'true' : 'false'});
-var list = new ActionList(); var a = new ActionDescriptor();
-a.putInteger(_c('H   '), ${num(hue)}); a.putInteger(_c('Strt'), ${num(saturation)}); a.putInteger(_c('Lght'), ${num(lightness)});
-list.putObject(_c('Hst2'), a); d.putList(_c('Adjs'), list);
-app.executeAction(_c('HStr'), d, DialogModes.NO);
+${amHueSaturation({ hue, saturation, lightness, colorize, range: color_range })}
+__ok({ layer: layer.name, color_range: ${lit(colorize ? 'all' : color_range)} });`);
+    },
+  },
+  {
+    name: 'adjust_color_balance',
+    label: 'Cân bằng màu',
+    kind: 'script',
+    description:
+      'Color Balance on a pixel layer — the main tool for fixing a color cast / white balance and for color grading. ' +
+      'Each of shadows, midtones, highlights is [cyan↔red, magenta↔green, yellow↔blue] from -100 to 100 ' +
+      '(positive = more red / more green / more blue). Photo too yellow/warm → midtones [0,0,+15..30]; too blue → ' +
+      '[0,0,-15..30]; too green → [0,-10..20,0]; warmer look → midtones [+10,0,-15]. Keep values small (5..30).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        shadows: BALANCE_PARAM('Vùng tối.'),
+        midtones: BALANCE_PARAM('Vùng trung tính.'),
+        highlights: BALANCE_PARAM('Vùng sáng.'),
+        preserve_luminosity: { type: 'boolean', description: 'Giữ độ sáng (mặc định true).' },
+        layer: LAYER_PARAM,
+      },
+      additionalProperties: false,
+    },
+    build({ shadows, midtones, highlights, preserve_luminosity = true, layer }) {
+      if (!shadows && !midtones && !highlights) throw new Error('Cần shadows, midtones hoặc highlights.');
+      return wrap(`${targetLayer(layer, { requirePixels: true })}
+${amColorBalance({ shadows, midtones, highlights, preserveLuminosity: preserve_luminosity })}
 __ok({ layer: layer.name });`);
     },
   },
@@ -436,8 +465,7 @@ __ok({ layer: layer.name });`);
     },
     build({ vibrance = 0, saturation = 0, layer }) {
       return wrap(`${targetLayer(layer, { requirePixels: true })}
-var d = new ActionDescriptor(); d.putInteger(_s('vibrance'), ${num(vibrance)}); d.putInteger(_c('Strt'), ${num(saturation)});
-app.executeAction(_s('vibrance'), d, DialogModes.NO);
+${amVibrance({ vibrance, saturation })}
 __ok({ layer: layer.name });`);
     },
   },
@@ -498,6 +526,34 @@ __ok({ layer: layer.name, mode: ${lit(mode)} });`);
       return wrap(`${targetLayer(layer, { requirePixels: true })}
 ${body}
 __ok({ layer: layer.name, effect: ${lit(effect)} });`);
+    },
+  },
+  {
+    name: 'color_grade',
+    label: 'Chỉnh màu theo phong cách',
+    kind: 'script',
+    description:
+      'Apply a ready-made color grading look to a pixel layer (inside the selection if any). Presets: ' +
+      Object.entries(COLOR_PRESETS).map(([k, p]) => `${k} (${p.label})`).join('; ') + '. ' +
+      'strength 10..100 (default 60). Use for requests like "chỉnh màu kiểu điện ảnh", "tone Hàn Quốc", "màu vintage". ' +
+      'It takes several history steps (returned as history_steps); to remove it use undo with that many steps.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        preset: { type: 'string', enum: Object.keys(COLOR_PRESETS) },
+        strength: { type: 'number', minimum: 10, maximum: 100 },
+        layer: LAYER_PARAM,
+      },
+      required: ['preset'],
+      additionalProperties: false,
+    },
+    build({ preset, strength = 60, layer }) {
+      const def = COLOR_PRESETS[preset];
+      if (!def) throw new Error(`Không có preset "${preset}".`);
+      const steps = def.steps(Math.min(100, Math.max(10, Number(strength))) / 100);
+      return wrap(`${targetLayer(layer, { requirePixels: true })}
+${steps.join('\n')}
+__ok({ layer: layer.name, preset: ${lit(preset)}, strength: ${num(strength)}, history_steps: ${steps.length} });`);
     },
   },
   {
@@ -577,6 +633,31 @@ __ok({ layer: layer.name, filter: ${lit(filter)} });`);
       else body = `doc.selection.invert();${Number(feather) > 0 ? ` doc.selection.feather(${num(feather)});` : ''}`;
       return wrap(`${body}
 __ok({ mode: ${lit(mode)} });`);
+    },
+  },
+  {
+    name: 'select_by_color',
+    label: 'Chọn vùng theo màu',
+    kind: 'client',
+    description:
+      'Select pixels by color, so the next adjustments, color changes or ai_edit apply only there. Methods: ' +
+      'magic_wand — the connected area of similar color around point (x, y) in document pixels, e.g. click in the sky ' +
+      '(pick the point from view_image); color — every pixel close to a given color; hue_range — every pixel in a color ' +
+      'family (reds, yellows, greens, cyans, blues, magentas), e.g. all foliage = greens. tolerance 1..100 (default 30). ' +
+      'Returns the selected area and coverage; check it makes sense before editing, and clear it with select_area mode "none" when done.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        method: { type: 'string', enum: ['magic_wand', 'color', 'hue_range'] },
+        x: { type: 'number' }, y: { type: 'number' },
+        contiguous: { type: 'boolean', description: 'magic_wand: chỉ vùng liền kề (mặc định true).' },
+        color: COLOR_PARAM('Màu cần chọn (method color).'),
+        hue_range: { type: 'string', enum: COLOR_RANGES.filter((r) => r !== 'all') },
+        tolerance: { type: 'number', minimum: 1, maximum: 100 },
+        feather: { type: 'number', minimum: 0, maximum: 200, description: 'Làm mềm mép vùng chọn (px).' },
+      },
+      required: ['method'],
+      additionalProperties: false,
     },
   },
   {
@@ -902,22 +983,26 @@ __ok({ layer: layer.name, bounds: __bounds(layer) });`);
     label: 'Chỉnh sửa bằng AI',
     kind: 'client',
     description:
-      'Generative AI edit with an instruction-following image model: change the CONTENT of the photo — remove an object ' +
-      'or person, replace the background, add an object, change one object\'s color or clothing, restyle. Slow (10-60 s) ' +
-      'and costs money per call: use only for content changes the other tools cannot do. Write `instruction` in ENGLISH, ' +
-      'specific and self-contained, describing the desired result (e.g. "Remove the red ball and fill the area with ' +
-      'matching grass and sky, keep everything else unchanged"). The result is added as a NEW layer on top (the original ' +
-      'stays underneath). For local edits pass `region` (document pixels, covering the object with a little room): only ' +
-      'that part plus some surrounding context is sent, and only the region is replaced (soft edge = feather), so the ' +
-      'rest keeps full quality. Without region the whole visible image is sent (downscaled to at most 1536 px). ' +
-      'Check the result with view_image; if it is bad, delete the AI layer with manage_layer.',
+      'Generative fill / AI edit with an instruction-following image model: change the CONTENT of the photo — remove an ' +
+      'object or person, add an object, replace the background, change one object\'s color or clothing, restyle. Slow ' +
+      '(10-60 s per variation) and each variation costs money: use only for content changes the other tools cannot do. ' +
+      'Where to edit: use_selection=true uses the selection the user drew in Photopea (any shape — like Photoshop ' +
+      'Generative Fill; get_document_info shows whether a selection exists) and only that shape is replaced; or pass ' +
+      '`region` (document pixels, around the object with a little room); or neither to edit the whole visible image ' +
+      '(downscaled to at most 1536 px). With a selection or region, the image sent is that area plus ~50% context on each ' +
+      'side, so the target is in the MIDDLE of what the model sees. Write `instruction` in ENGLISH, specific, describing ' +
+      'the result, e.g. "Remove the person in the middle and fill the area naturally with the surrounding grass" or "Add a ' +
+      'small white cat sitting in the middle of the image, matching the lighting". variations 1-3 (default 1): each result ' +
+      'becomes its own layer, only the first visible — tell the user they can pick another. The original stays underneath. ' +
+      'Check the result with view_image; if bad, delete the AI layer(s) with manage_layer and retry once with a clearer instruction.',
     input_schema: {
       type: 'object',
       properties: {
         instruction: { type: 'string', description: 'Chỉ dẫn bằng tiếng Anh, mô tả kết quả mong muốn.' },
+        use_selection: { type: 'boolean', description: 'Dùng vùng chọn hiện tại trong Photopea (giống Generative Fill).' },
         region: {
           type: 'object',
-          description: 'Vùng cần sửa (pixel tài liệu). Bỏ trống = sửa toàn ảnh.',
+          description: 'Vùng cần sửa (pixel tài liệu) khi không dùng vùng chọn. Bỏ trống cả hai = sửa toàn ảnh.',
           properties: {
             x: { type: 'number' }, y: { type: 'number' },
             width: { type: 'number', minimum: 1 }, height: { type: 'number', minimum: 1 },
@@ -925,7 +1010,8 @@ __ok({ layer: layer.name, bounds: __bounds(layer) });`);
           required: ['x', 'y', 'width', 'height'],
           additionalProperties: false,
         },
-        feather: { type: 'number', minimum: 0, maximum: 200, description: 'Làm mềm mép vùng thay thế (px), mặc định 12.' },
+        feather: { type: 'number', minimum: 0, maximum: 200, description: 'Làm mềm mép khi dùng region (px), mặc định 12.' },
+        variations: { type: 'integer', minimum: 1, maximum: 3, description: 'Số phương án (mặc định 1).' },
       },
       required: ['instruction'],
       additionalProperties: false,

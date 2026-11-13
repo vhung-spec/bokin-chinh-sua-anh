@@ -281,3 +281,91 @@ test('tham số sai bị chặn trước khi chạy', async () => {
 test('không có lỗi JavaScript trên trang', () => {
   assert.deepEqual(pageErrors, [], pageErrors.join('\n'));
 });
+
+// ───────────────────────────── Chỉnh màu nâng cao ─────────────────────────────
+
+/** Tài liệu 200x100: nửa trái đỏ #C02020, nửa phải xanh #2040C0. */
+async function twoColorDoc() {
+  await freshDoc(page, { width: 200, height: 100, background: '#2040C0' });
+  json(await tool(page, 'select_area', { mode: 'rect', x: 0, y: 0, width: 100, height: 100 }));
+  json(await tool(page, 'edit_selection', { action: 'fill', color: '#C02020' }));
+  json(await tool(page, 'select_area', { mode: 'none' }));
+}
+
+test('Color Balance, Curves và Levels theo từng kênh', async () => {
+  await freshDoc(page, { background: '#808080' });
+  json(await tool(page, 'adjust_color_balance', { midtones: [50, 0, -50] }));
+  let p = await pixel(page, 5, 5);
+  assert.ok(p.r > p.g + 15 && p.g > p.b + 15, `color balance: ${JSON.stringify(p)}`);
+
+  await freshDoc(page, { background: '#808080' });
+  json(await tool(page, 'adjust_curves', { red: [[0, 0], [128, 180], [255, 255]], blue: [[0, 0], [128, 80], [255, 255]] }));
+  p = await pixel(page, 5, 5);
+  assert.ok(p.r > 165 && p.b < 95 && Math.abs(p.g - 128) <= 2, `curves R/B: ${JSON.stringify(p)}`);
+
+  await freshDoc(page, { background: '#808080' });
+  json(await tool(page, 'adjust_levels', { channel: 'green', input_white: 200 }));
+  p = await pixel(page, 5, 5);
+  assert.ok(p.g > 155 && Math.abs(p.r - 128) <= 2 && Math.abs(p.b - 128) <= 2, `levels G: ${JSON.stringify(p)}`);
+});
+
+test('Hue/Saturation chỉ một dải màu', async () => {
+  await twoColorDoc();
+  json(await tool(page, 'adjust_hue_saturation', { color_range: 'reds', saturation: -100 }));
+  const red = await pixel(page, 50, 50);
+  const blue = await pixel(page, 150, 50);
+  assert.ok(Math.abs(red.r - red.b) < 6, `nửa đỏ thành xám: ${JSON.stringify(red)}`);
+  // Photopea làm tròn lại khi chạy Hue/Saturation nên cho phép lệch ±2
+  assert.ok(Math.abs(blue.r - 0x20) <= 2 && Math.abs(blue.g - 0x40) <= 2 && Math.abs(blue.b - 0xC0) <= 2, `nửa xanh giữ nguyên: ${JSON.stringify(blue)}`);
+});
+
+test('color_grade: mọi preset đổi màu và hoàn tác đúng số bước', async () => {
+  const presets = ['cinematic', 'vintage', 'warm', 'cool_moody', 'korean', 'faded_matte', 'bw_dramatic', 'vivid'];
+  for (const preset of presets) {
+    await freshDoc(page, { background: '#B07050' });
+    const before = await pixel(page, 5, 5);
+    const r = json(await tool(page, 'color_grade', { preset, strength: 100 }));
+    const after = await pixel(page, 5, 5);
+    assert.notDeepEqual(after, before, `${preset} phải đổi màu`);
+    json(await tool(page, 'undo', { steps: r.history_steps }));
+    assert.deepEqual(await pixel(page, 5, 5), before, `${preset}: hoàn tác ${r.history_steps} bước về như cũ`);
+  }
+  await freshDoc(page, { background: '#808080' });
+  json(await tool(page, 'color_grade', { preset: 'warm', strength: 100 }));
+  const warm = await pixel(page, 5, 5);
+  assert.ok(warm.r > warm.b + 10, `warm: ${JSON.stringify(warm)}`);
+  await freshDoc(page, { background: '#B07050' });
+  json(await tool(page, 'color_grade', { preset: 'bw_dramatic', strength: 100 }));
+  const bw = await pixel(page, 5, 5);
+  assert.ok(Math.abs(bw.r - bw.b) < 6, `bw: ${JSON.stringify(bw)}`);
+});
+
+test('select_by_color: magic wand, theo màu, theo dải màu; get_document_info báo vùng chọn', async () => {
+  await twoColorDoc();
+  assert.equal(json(await tool(page, 'get_document_info')).selection, null);
+
+  let r = json(await tool(page, 'select_by_color', { method: 'magic_wand', x: 150, y: 50 }));
+  assert.deepEqual(r.selection_bounds, { x: 100, y: 0, width: 100, height: 100 });
+  assert.deepEqual(json(await tool(page, 'get_document_info')).selection, { x: 100, y: 0, width: 100, height: 100 });
+  json(await tool(page, 'adjust_brightness_contrast', { brightness: -60 }));
+  json(await tool(page, 'select_area', { mode: 'none' }));
+  assert.ok((await pixel(page, 150, 50)).b < 0xC0, 'nửa phải tối đi');
+  assert.deepEqual(await pixel(page, 50, 50), { r: 0xC0, g: 0x20, b: 0x20, a: 255 }, 'nửa trái giữ nguyên');
+
+  await twoColorDoc();
+  r = json(await tool(page, 'select_by_color', { method: 'color', color: '#C02020', tolerance: 20 }));
+  assert.ok(Math.abs(r.coverage_percent - 50) < 2, JSON.stringify(r));
+  json(await tool(page, 'edit_selection', { action: 'fill', color: '#00FF00' }));
+  json(await tool(page, 'select_area', { mode: 'none' }));
+  assert.deepEqual(await pixel(page, 50, 50), { r: 0, g: 255, b: 0, a: 255 });
+  assert.deepEqual(await pixel(page, 150, 50), { r: 0x20, g: 0x40, b: 0xC0, a: 255 });
+  const layers = json(await tool(page, 'get_document_info')).layers;
+  assert.ok(!layers.some((l) => l.name.startsWith('__bokin')), 'không để lại layer tạm');
+
+  await twoColorDoc();
+  r = json(await tool(page, 'select_by_color', { method: 'hue_range', hue_range: 'blues' }));
+  assert.ok(Math.abs(r.selection_bounds.x - 100) <= 1 && r.selection_bounds.width <= 101, JSON.stringify(r));
+  json(await tool(page, 'select_area', { mode: 'none' }));
+
+  assert.equal((await tool(page, 'select_by_color', { method: 'hue_range', hue_range: 'greens' })).isError, true, 'không có màu xanh lá');
+});

@@ -39,6 +39,8 @@ const state = {
   pendingNotes: [],
   /** token đã dùng cho mỗi lần gọi Claude (để theo dõi chi phí) */
   usage: [],
+  /** server có bật chỉnh sửa bằng AI tạo ảnh không */
+  aiEnabled: false,
 };
 
 const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: 'vi' } } });
@@ -60,10 +62,13 @@ fetch('/api/health')
     if (!h.has_api_key) {
       showNotice('Server chưa có ANTHROPIC_API_KEY. Tạo file .env (xem .env.example), điền key rồi khởi động lại server.');
     }
-    if (h.ai_edit?.enabled) {
-      const chip = make('button', '', 'Xoá vật thể thừa trong ảnh bằng AI');
-      chip.type = 'button';
-      $('suggestions').append(chip);
+    state.aiEnabled = Boolean(h.ai_edit?.enabled);
+    if (state.aiEnabled) {
+      for (const text of ['Xoá vật thể trong vùng tôi vừa khoanh', 'Đổi nền thành bãi biển lúc hoàng hôn']) {
+        const chip = make('button', '', text);
+        chip.type = 'button';
+        $('suggestions').append(chip);
+      }
     }
   })
   .catch(() => showNotice('Không kết nối được server. Hãy chạy "npm start".'));
@@ -80,6 +85,9 @@ els.input.addEventListener('keydown', (e) => {
   }
 });
 els.input.addEventListener('input', autoGrow);
+// Khi người dùng vừa khoanh vùng trong Photopea rồi bấm vào ô chat: cho biết Bokin thấy vùng chọn đó
+// (giống Generative Fill của Photoshop: khoanh vùng -> gõ yêu cầu).
+els.input.addEventListener('focus', updateSelectionHint);
 $('suggestions').addEventListener('click', (e) => {
   const button = e.target.closest('button');
   if (button) send(button.textContent.trim());
@@ -99,6 +107,7 @@ function submitInput() {
 
 async function send(text) {
   if (state.busy) return;
+  $('selection-hint').hidden = true;
   const content = state.pendingNotes.map((note) => ({ type: 'text', text: note }));
   state.pendingNotes = [];
   content.push({ type: 'text', text });
@@ -192,6 +201,21 @@ async function callClaude() {
     thinking.remove();
     state.abort = null;
   }
+}
+
+async function updateSelectionHint() {
+  const hint = $('selection-hint');
+  if (state.busy || !bridge.isReady) return;
+  const sel = await runner._selectionBounds().catch(() => null);
+  if (!sel) {
+    hint.hidden = true;
+    return;
+  }
+  const size = `${Math.round(sel.width)}×${Math.round(sel.height)} px`;
+  hint.textContent = state.aiEnabled
+    ? `Đang có vùng chọn ${size}. Ví dụ: "xoá vật thể trong vùng chọn", "thêm một chậu cây vào đây", "chỉnh màu vùng này ấm hơn".`
+    : `Đang có vùng chọn ${size}: các chỉnh sửa (màu, sáng, bộ lọc…) sẽ chỉ áp dụng trong vùng này.`;
+  hint.hidden = false;
 }
 
 function setBusy(busy) {

@@ -3,7 +3,9 @@
 // setup:
 //   'photo'    -> trò chuyện mới, mở ảnh mẫu (bầu trời, bãi cỏ, quả bóng đỏ; hơi tối, có nhiễu)
 //   'empty'    -> trò chuyện mới, không mở ảnh nào
+//   'photo_yellow' -> như 'photo' nhưng ảnh bị ám vàng
 //   'continue' -> tiếp tục cuộc trò chuyện của tình huống trước
+// prepare(ctx) (tuỳ chọn): chạy sau setup, trước khi gửi câu lệnh — ví dụ tạo vùng chọn như người dùng khoanh.
 // check(before, after, ctx) trả về chuỗi lỗi (thất bại) hoặc null (đạt).
 //   before/after: kết quả analyze() (kích thước, màu trung bình, độ bão hoà, vị trí bóng đỏ, độ nét...)
 //   ctx.info(): get_document_info; ctx.textColor(name): mã màu của layer chữ
@@ -120,6 +122,45 @@ export const SCENARIOS = [
     setup: 'photo',
     requires: 'ai_edit', // chỉ chạy khi server có HF_TOKEN
     prompt: 'Xoá quả bóng đỏ khỏi ảnh',
+    check: (b, a) => (a.red.count < b.red.count * 0.2 ? null : `vẫn còn bóng đỏ: ${b.red.count} -> ${a.red.count} pixel đỏ`),
+  },
+  {
+    id: 'can-bang-mau',
+    setup: 'photo_yellow',
+    prompt: 'Ảnh bị ám vàng quá, cân bằng lại màu giúp mình',
+    check: (b, a) => {
+      const castBefore = (b.r + b.g) / 2 - b.b;
+      const castAfter = (a.r + a.g) / 2 - a.b;
+      return castAfter <= castBefore - 8 ? null : `độ ám vàng (R+G)/2-B: ${castBefore.toFixed(0)} -> ${castAfter.toFixed(0)} (cần giảm >= 8)`;
+    },
+  },
+  {
+    id: 'troi-xanh-hon',
+    setup: 'photo',
+    prompt: 'Làm bầu trời xanh đậm và tươi hơn, giữ nguyên màu bãi cỏ và quả bóng',
+    check: (b, a) => {
+      const satSky = (r) => Math.max(r.r, r.g, r.b) - Math.min(r.r, r.g, r.b);
+      if (satSky(a.regions.sky) < satSky(b.regions.sky) + 6) return `trời chưa xanh hơn: độ bão hoà ${satSky(b.regions.sky)} -> ${satSky(a.regions.sky)}`;
+      const dg = Math.abs(a.regions.grass.g - b.regions.grass.g) + Math.abs(a.regions.grass.r - b.regions.grass.r);
+      return dg <= 12 ? null : `bãi cỏ bị đổi màu: ${JSON.stringify(b.regions.grass)} -> ${JSON.stringify(a.regions.grass)}`;
+    },
+  },
+  {
+    id: 'mau-dien-anh',
+    setup: 'photo',
+    prompt: 'Chỉnh màu ảnh theo kiểu điện ảnh',
+    check: (b, a) => {
+      const diff = Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
+      return diff >= 6 ? null : `màu gần như không đổi (lệch ${diff})`;
+    },
+  },
+  {
+    id: 'generative-fill',
+    setup: 'photo',
+    requires: 'ai_edit',
+    // Giống người dùng tự khoanh quanh quả bóng trong Photopea rồi gõ lệnh
+    prepare: (ctx) => ctx.tool('select_area', { mode: 'ellipse', x: 690, y: 340, width: 260, height: 260, feather: 4 }),
+    prompt: 'Xoá vật thể trong vùng tôi vừa khoanh',
     check: (b, a) => (a.red.count < b.red.count * 0.2 ? null : `vẫn còn bóng đỏ: ${b.red.count} -> ${a.red.count} pixel đỏ`),
   },
   {

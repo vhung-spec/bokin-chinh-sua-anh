@@ -150,6 +150,12 @@ button, textarea { font: inherit; color: inherit; }
 @keyframes blink { 50% { opacity: .3; } }
 
 /* ── Composer ── */
+.selection-hint {
+  margin-bottom: 6px; padding: 6px 9px; border-radius: 8px;
+  background: rgb(76 141 255 / .12); border: 1px dashed var(--accent);
+  font-size: 12.5px; color: var(--text);
+}
+.selection-hint[hidden] { display: none; }
 .composer { border-top: 1px solid var(--border); padding: 10px 12px 12px; }
 .composer textarea {
   width: 100%; resize: none; max-height: 160px;

@@ -8,14 +8,17 @@ Bokin là công cụ web giúp chỉnh sửa ảnh bằng câu lệnh tiếng Vi
 
 | Nhóm | Ví dụ câu lệnh |
 |---|---|
-| Ánh sáng & màu | "tăng sáng một chút", "tăng tương phản", "màu tươi hơn", "chỉnh Levels/Curves", "tự động cân màu" |
+| Ánh sáng | "tăng sáng một chút", "tăng tương phản", "làm sâu vùng tối", "tự động cân chỉnh" |
+| Chỉnh màu | "ảnh bị ám vàng, cân bằng lại", "chỉ làm bầu trời xanh hơn", "giảm đỏ trên da", "lá cây chuyển màu thu", "màu tươi hơn nhưng giữ da tự nhiên" (Color Balance, Curves/Levels từng kênh R/G/B, Hue/Saturation theo dải màu, Vibrance) |
+| Phong cách màu | "chỉnh màu kiểu điện ảnh", "tone Hàn Quốc", "vintage", "ấm áp", "lạnh trầm", "phai màu", "đen trắng mạnh", "rực rỡ" (8 preset, chỉnh được độ mạnh) |
+| Chọn theo màu | "chọn bầu trời" (magic wand), "chọn mọi chỗ màu xanh lá", "chọn màu đỏ này" → chỉ chỉnh trong vùng đó |
 | Hiệu ứng | "đen trắng", "sepia", "tông ấm/lạnh", "đảo màu", "posterize" |
 | Bộ lọc | "làm nét", "làm mờ nền", "giảm nhiễu", "thêm hạt film", "mờ chuyển động" |
 | Khung ảnh | "cắt vuông 1:1", "cắt 16:9 giữ người ở giữa", "đổi kích thước 1080px", "xoay 90°", "lật ngang", "thêm viền trắng 40px" |
 | Vùng chọn | "làm tối nửa trái", "tô đen vùng này", "xoá vùng góc dưới" |
 | Chữ & hình | "thêm chữ *Khai trương* font Montserrat đậm", "đặt chữ ở góc dưới phải", "vẽ thanh nền đen mờ phía sau chữ" |
 | Layer | nhân đôi, xoá, đổi tên, đổi thứ tự, độ mờ, chế độ hoà trộn, gộp layer |
-| AI tạo ảnh (tuỳ chọn) | "xoá người phía sau", "đổi nền thành bãi biển", "thêm kính râm cho người này", "đổi áo sang màu đỏ" |
+| AI tạo ảnh / Generative Fill (tuỳ chọn) | khoanh vùng trong Photopea rồi gõ "xoá cái này", "thêm con mèo vào đây"; hoặc "đổi nền thành bãi biển", "đổi áo sang màu đỏ"; có thể yêu cầu 2–3 phương án |
 | Khác | tạo ảnh mới theo kích thước (bìa Facebook, story…), hoàn tác/làm lại, xuất PNG/JPG/WEBP/PSD |
 
 Claude **tự xem ảnh** (trước và sau khi sửa) để chọn vị trí đặt chữ, kiểm tra độ sáng, rồi tự hoàn tác nếu kết quả chưa ổn.
@@ -66,6 +69,8 @@ Các yêu cầu thay đổi **nội dung** ảnh (xoá vật thể, đổi nền
 1. Tạo token tại [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) với quyền **Make calls to Inference Providers**.
 2. Thêm `HF_TOKEN=...` vào `.env` rồi khởi động lại server.
 
+**Dùng như Generative Fill của Photoshop:** khoanh vùng trong Photopea bằng bất kỳ công cụ chọn nào (Lasso, Marquee, Quick Selection, Magic Wand, cọ Quick Mask…), bấm vào ô chat (Bokin hiện dòng *"Đang có vùng chọn …"*), rồi gõ yêu cầu như *"xoá vật thể này"*, *"thêm một chậu cây vào đây"*, *"cho 3 phương án"*. AI chỉ thay **đúng hình dạng vùng chọn** (giữ cả mép mềm), và vùng chọn vẫn còn sau đó để thử lại. Nếu yêu cầu nhiều phương án, mỗi phương án nằm trên một layer riêng; chỉ phương án đầu được hiện, bật/tắt layer để so sánh.
+
 Cách hoạt động: Bokin gửi ảnh (hoặc chỉ vùng cần sửa kèm một phần xung quanh) cho mô hình, rồi đặt kết quả thành **layer mới** phía trên. Ảnh gốc vẫn còn bên dưới; khi sửa theo vùng, Bokin thêm mask để chỉ thay đúng vùng đó. Mỗi lần sửa mất khoảng 10–60 giây và tính phí vào tài khoản Hugging Face (thường vài cent mỗi ảnh; xem bảng giá của nhà cung cấp). Mô hình không tạo được nền trong suốt; muốn tách nền trong suốt thì dùng *Remove BG / Magic Cut* có sẵn trong Photopea.
 
 Khi chưa có `HF_TOKEN`, công cụ này được ẩn khỏi Claude và Claude sẽ nói rõ là tính năng chưa bật.
@@ -87,7 +92,7 @@ Khi chưa có `HF_TOKEN`, công cụ này được ẩn khỏi Claude và Claude
 ```
 
 1. Bạn gõ yêu cầu; trình duyệt gửi lịch sử hội thoại lên server.
-2. Server gọi Claude kèm danh sách **28 tool** (định nghĩa trong `shared/tools.js`).
+2. Server gọi Claude kèm danh sách **31 tool** (định nghĩa trong `shared/tools.js`).
 3. Claude trả về các lệnh `tool_use`. Trình duyệt chạy từng lệnh bằng cách gửi **script** vào Photopea qua Live Messaging API (`postMessage`), rồi gửi kết quả (`tool_result`, có thể kèm ảnh xem trước) lên lại.
 4. Lặp lại cho tới khi Claude trả lời xong.
 
@@ -103,7 +108,8 @@ server/
   ai-edit.js        chỉnh sửa bằng AI tạo ảnh qua Hugging Face (POST /api/ai-edit)
   system-prompt.js  hướng dẫn cho Claude
 shared/             dùng chung cho server và trình duyệt
-  tools.js          định nghĩa 28 tool + hàm sinh script Photopea cho từng tool
+  tools.js          định nghĩa 31 tool + hàm sinh script Photopea cho từng tool
+  color.js          mã Color Balance, Curves/Levels từng kênh, Hue/Sat theo dải màu, 8 preset màu
   script-kit.js     hàm phụ trợ sinh script an toàn (thoát chuỗi, kiểm tra cú pháp)
   validate.js       kiểm tra tham số tool theo JSON Schema
 public/
@@ -143,7 +149,9 @@ Photopea chạy script bằng **trình thông dịch riêng**, không phải Jav
 
 - **Chỉ dùng cú pháp ES5 đơn giản:** `var`, `function`, vòng lặp `for`. Arrow function, template string, `arguments` và callback truyền vào `map`/`forEach`/`filter`/`sort` **không chạy**.
 - **Khi script lỗi, `try/catch` không bắt được** và Photopea không gửi tín hiệu `"done"`. Bokin xử lý bằng cách gửi thêm một script "sentinel" sau mỗi lệnh, nên phát hiện lỗi ngay. Script của tool tự kiểm tra điều kiện (có ảnh chưa, layer có tồn tại không…) và báo lỗi bằng `__fail(...)`.
-- **Một số hàm DOM không làm gì cả** dù không báo lỗi: `adjustLevels`, `adjustCurves`, `adjustColorBalance`, `applyUnSharpMask`, `applyMedianNoise`, `posterize`, `threshold`, `mergeVisibleLayers`. Bokin dùng **Action Manager** (`app.executeAction`) thay cho các hàm này.
+- **Một số hàm DOM không làm gì cả** dù không báo lỗi: `adjustLevels`, `adjustCurves`, `adjustColorBalance`, `applyUnSharpMask`, `applyMedianNoise`, `posterize`, `threshold`, `mergeVisibleLayers`. Bokin dùng **Action Manager** (`app.executeAction`) thay cho các hàm này. Lệnh *Color Range* (`ClrR`) cũng không chạy, nên chọn theo màu được tính trong trình duyệt rồi nạp vào Photopea thành vùng chọn.
+- Đọc `selection.bounds` khi **không có vùng chọn** làm script dừng im lặng (vẫn gửi `"done"`), nên phải kiểm tra vùng chọn trong một script riêng.
+- `bounds` của layer chỉ bao phần không trong suốt; khi co giãn ảnh có vùng trong suốt phải dựa vào kích thước tài liệu.
 - `resizeImage(w, null)` bị lỗi, nên phải truyền đủ cả hai chiều. Giá trị `bounds` là đối tượng, cần đọc qua `.value`.
 - So sánh đối tượng bằng `===` không đáng tin cậy, nên so sánh layer theo tên.
 - Chữ được vẽ **bất đồng bộ** (font tải qua mạng), nên ngay sau khi tạo chữ, kích thước có thể bằng 0. Bokin chờ tới khi kích thước ổn định rồi mới báo cho Claude.
@@ -166,7 +174,7 @@ npm run test:e2e
 
 ### Đánh giá với Claude API thật
 
-`npm run eval` chạy 12 câu lệnh tiếng Việt (làm sáng, đen trắng, cắt vuông giữ chủ thể, thêm chữ, đổi màu chữ, hoàn tác, thu nhỏ, thêm viền, làm mờ nền, tạo ảnh bìa, tăng tương phản, xoá vật thể bằng AI) qua **giao diện thật, Photopea thật và Claude API thật** trên một ảnh mẫu. Mỗi tình huống được chấm tự động bằng cách đo pixel và layer, rồi ghi số lượt gọi, token và chi phí ước tính vào `eval/out/<thời gian>/report.md`, kèm ảnh kết quả.
+`npm run eval` chạy 16 câu lệnh tiếng Việt (làm sáng, đen trắng, cắt vuông giữ chủ thể, thêm chữ, đổi màu chữ, hoàn tác, thu nhỏ, thêm viền, làm mờ nền, tạo ảnh bìa, tăng tương phản, **cân bằng màu ảnh ám vàng, chỉ làm trời xanh hơn, chỉnh màu kiểu điện ảnh**, xoá vật thể bằng AI, **Generative Fill theo vùng đã khoanh**) qua **giao diện thật, Photopea thật và Claude API thật** trên một ảnh mẫu. Mỗi tình huống được chấm tự động bằng cách đo pixel và layer, rồi ghi số lượt gọi, token và chi phí ước tính vào `eval/out/<thời gian>/report.md`, kèm ảnh kết quả.
 
 ```bash
 npm run eval
@@ -178,7 +186,7 @@ Chạy một phần, ví dụ chỉ các tình huống có "chu" trong tên:
 npm run eval -- chu
 ```
 
-Lưu ý: lệnh này **tốn tiền API thật**, ước tính 1–3 USD cho toàn bộ với `claude-opus-5-5`. Tình huống xoá vật thể bằng AI chỉ chạy khi có `HF_TOKEN`.
+Lưu ý: lệnh này **tốn tiền API thật**, ước tính 2–4 USD cho toàn bộ với `claude-opus-5-5`. Hai tình huống AI tạo ảnh chỉ chạy khi có `HF_TOKEN`.
 
 ## Chi phí và giới hạn
 

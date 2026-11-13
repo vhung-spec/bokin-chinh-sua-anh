@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRequest, prepareForEcho, checkMessages, runTurn, describeError, config } from '../../server/chat.js';
+import { buildRequest, prepareForEcho, checkMessages, runTurn, describeError, config, hasAnthropicCredentials } from '../../server/chat.js';
 import { createApp } from '../../server/app.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { InferenceClientProviderApiError } from '@huggingface/inference';
@@ -159,5 +159,28 @@ test('HTTP: /api/ai-edit tắt (501), sai body (400), chạy với editor giả 
     assert.equal(health.ai_edit.enabled, true);
   } finally {
     on.close();
+  }
+});
+
+test('hasAnthropicCredentials và thông báo khi thiếu key', async () => {
+  assert.equal(hasAnthropicCredentials({ ANTHROPIC_API_KEY: 'k' }), true);
+  assert.equal(hasAnthropicCredentials({ ANTHROPIC_AUTH_TOKEN: 't' }), true);
+  const saved = { key: process.env.ANTHROPIC_API_KEY, token: process.env.ANTHROPIC_AUTH_TOKEN };
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  const server = createApp().listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  try {
+    if (!hasAnthropicCredentials()) {
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/api/chat`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: userMsg }),
+      });
+      assert.equal(res.status, 500);
+      assert.match((await res.json()).error, /ANTHROPIC_API_KEY/);
+    }
+  } finally {
+    server.close();
+    if (saved.key !== undefined) process.env.ANTHROPIC_API_KEY = saved.key;
+    if (saved.token !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = saved.token;
   }
 });
