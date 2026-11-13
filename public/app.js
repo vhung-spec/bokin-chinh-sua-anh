@@ -373,13 +373,23 @@ window.addEventListener('drop', (e) => {
 });
 
 async function openFile(file) {
+  if (state.busy) {
+    renderError('Bokin đang làm việc với ảnh hiện tại. Đợi xong (hoặc bấm Dừng) rồi mở ảnh khác.');
+    return;
+  }
   try {
     setStatus(`Đang mở ${file.name}…`);
     await bridge.openFile(await file.arrayBuffer(), file.name);
     runner.undoDepth = 0;
     colorPanel.reset();
+    // Ảnh mới: lịch sử trò chuyện về ảnh cũ (kèm các ảnh xem trước) không còn giúp ích mà lượt gọi nào cũng
+    // phải gửi lại, nên bắt đầu cuộc trò chuyện mới.
+    const hadConversation = state.messages.length > 0;
+    if (hadConversation) resetConversation();
     addNote('opened-file', `(Ghi chú hệ thống: người dùng vừa mở ảnh "${file.name}" trong Photopea; đây là tài liệu đang hoạt động.)`);
-    renderInfo(`Đã mở ảnh: ${file.name}`);
+    renderInfo(hadConversation
+      ? `Đã mở ảnh: ${file.name}. Bắt đầu cuộc trò chuyện mới cho ảnh này (không gửi lại lịch sử ảnh cũ, đỡ tốn phí).`
+      : `Đã mở ảnh: ${file.name}`);
     setStatus('Photopea đã sẵn sàng', 'ok');
   } catch (error) {
     renderError(error.message);
@@ -419,6 +429,12 @@ els.newChat.addEventListener('click', () => {
     state.stopRequested = true;
     state.abort?.abort();
   }
+  resetConversation();
+  els.input.focus();
+});
+
+/** Xoá cuộc trò chuyện (tài liệu trong Photopea giữ nguyên). */
+function resetConversation() {
   state.messages = [];
   state.pendingNotes = [];
   state.lastRequest = null;
@@ -426,8 +442,7 @@ els.newChat.addEventListener('click', () => {
   stopKeepAlive();
   els.chat.replaceChildren(els.empty);
   els.empty.hidden = false;
-  els.input.focus();
-});
+}
 
 // ───────────────────────────── Hiển thị ─────────────────────────────
 function append(el) {

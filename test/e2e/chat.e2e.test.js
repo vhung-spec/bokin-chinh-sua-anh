@@ -247,6 +247,31 @@ test('không gửi lại ảnh nếu ảnh không đổi; gửi lại khi ảnh 
   scenario = 'design';
 });
 
+test('mở ảnh khác: tự bắt đầu cuộc trò chuyện mới, không gửi lại lịch sử ảnh cũ', async () => {
+  scenario = 'text';
+  await page.click('#new-chat-btn');
+  json(await tool(page, 'create_document', { width: 100, height: 80, background: '#204060' }));
+  await page.fill('#input', 'Ảnh thứ nhất');
+  await page.press('#input', 'Enter');
+  await page.waitForFunction(() => !window.bokin.state.busy && window.bokin.state.messages.length >= 2);
+
+  const png = (await import('./helpers.js')).solidPng(64, 48, [200, 120, 40]);
+  await page.setInputFiles('#file-input', { name: 'anh-moi.png', mimeType: 'image/png', buffer: png });
+  await page.waitForSelector('.msg.info >> text=Bắt đầu cuộc trò chuyện mới');
+  assert.equal(await page.evaluate(() => window.bokin.state.messages.length), 0, 'đã xoá lịch sử');
+  assert.equal(await page.locator('.msg.user').count(), 0, 'giao diện cũng được làm mới');
+
+  const n = requests.length;
+  await page.fill('#input', 'Ảnh thứ hai');
+  await page.press('#input', 'Enter');
+  await page.waitForFunction(() => !window.bokin.state.busy);
+  const sent = requests.slice(n).find((r) => r.body.max_tokens !== 0).body.messages;
+  assert.equal(sent.length, 1, 'chỉ gửi tin nhắn mới');
+  assert.ok(sent[0].content.some((b) => b.type === 'text' && b.text.includes('anh-moi.png')), 'kèm ghi chú vừa mở ảnh');
+  assert.ok(sent[0].content.some((b) => b.type === 'image'), 'kèm ảnh mới');
+  scenario = 'design';
+});
+
 test('không có lỗi JavaScript trên trang', () => {
   assert.deepEqual(pageErrors, [], pageErrors.join('\n'));
 });
