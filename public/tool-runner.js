@@ -17,6 +17,8 @@ export class ToolRunner {
     this.onDownload = onDownload;
     // Số bước đang hoàn tác so với trạng thái mới nhất (Photopea không cho đọc vị trí lịch sử hiện tại).
     this.undoDepth = 0;
+    // Cạnh dài tối đa của ảnh gửi cho AI tạo ảnh (server gửi qua /api/health).
+    this.aiMaxSide = 1024;
   }
 
   /** @returns {Promise<ToolOutcome>} */
@@ -324,15 +326,20 @@ __ok({});`));
           height: Math.min(H, target.y + target.height + margin) - ay0,
         };
       }
-      const scale = Math.min(1, 1536 / Math.max(area.width, area.height));
+      const scale = Math.min(1, this.aiMaxSide / Math.max(area.width, area.height));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(area.width * scale));
       canvas.height = Math.max(1, Math.round(area.height * scale));
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(bitmap, area.x, area.y, area.width, area.height, 0, 0, canvas.width, canvas.height);
       bitmap.close();
       const sent = canvas.toDataURL('image/png');
+      // Vùng cần sửa tính theo toạ độ ảnh gửi đi (để khớp màu theo phần ngữ cảnh bao quanh).
+      const targetInSent = target && {
+        x0: (target.x - area.x) * scale, y0: (target.y - area.y) * scale,
+        x1: (target.x + target.width - area.x) * scale, y1: (target.y + target.height - area.y) * scale,
+      };
       const image = sent.slice(sent.indexOf(',') + 1);
 
       // Các phương án chạy song song.
@@ -342,8 +349,13 @@ __ok({});`));
       if (!results.length) return fail(settled[0].reason?.message ?? 'Dịch vụ AI lỗi.');
 
       const layers = [];
-      for (const [i, buffer] of results.entries()) {
+      let matched = false;
+      for (const [i, raw] of results.entries()) {
         const name = (results.length > 1 ? `AI ${i + 1}/${results.length}: ${instruction}` : `AI: ${instruction}`).slice(0, 60);
+        // Khớp màu/độ sáng kết quả AI với ảnh gốc theo phần ngữ cảnh, để chỗ ghép không lộ viền.
+        const fixed = targetInSent ? await matchColors(canvas, raw, targetInSent) : null;
+        if (fixed) matched = true;
+        const buffer = fixed ?? raw;
         const placed = await this._placeImageAsLayer(buffer, area, name, {
           maskRect, feather, maskLayer: saved?.token, hidden: i > 0,
         });
@@ -356,6 +368,7 @@ __ok({});`));
         visible_layer: layers[0],
         sent_area: area,
         masked_to: saved ? 'selection' : maskRect,
+        color_matched: matched,
         ...(results.length < n ? { failed_variations: n - results.length } : {}),
         note: layers.length > 1
           ? 'Mỗi phương án là một layer; chỉ layer đầu đang hiện. Ảnh gốc vẫn ở bên dưới. Kiểm tra bằng view_image.'
@@ -438,6 +451,56 @@ __ok({ layer: L.name, bounds: __bounds(L) });`, { needsDocument: false }));
     }
     return ok(r.echoes.length ? r.echoes.join('\n') : 'Script chạy xong (không có output).');
   }
+}
+
+/**
+ * Khớp màu kết quả AI với ảnh gốc: so phần NGỮ CẢNH (ngoài vùng cần sửa, lẽ ra không đổi) của hai ảnh, tính
+ * độ lệch trung bình và độ tương phản từng kênh R, G, B, rồi chỉnh toàn bộ kết quả AI theo đó.
+ * Trả về PNG (ArrayBuffer) cùng kích thước ảnh đã gửi, hoặc null nếu phần ngữ cảnh quá nhỏ để đo.
+ */
+async function matchColors(sentCanvas, resultBuffer, t) {
+  const w = sentCanvas.width;
+  const h = sentCanvas.height;
+  const bmp = await createImageBitmap(new Blob([resultBuffer]));
+  const out = document.createElement('canvas');
+  out.width = w;
+  out.height = h;
+  const octx = out.getContext('2d', { willReadFrequently: true });
+  octx.imageSmoothingQuality = 'high';
+  octx.drawImage(bmp, 0, 0, w, h);
+  bmp.close();
+  const A = octx.getImageData(0, 0, w, h);
+  const O = sentCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+  const a = A.data;
+  const sum = [[0, 0, 0], [0, 0, 0]];
+  const sq = [[0, 0, 0], [0, 0, 0]];
+  let n = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (x >= t.x0 && x < t.x1 && y >= t.y0 && y < t.y1) continue; // trong vùng cần sửa: bỏ qua
+      const i = (y * w + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        sum[0][c] += O[i + c]; sq[0][c] += O[i + c] * O[i + c];
+        sum[1][c] += a[i + c]; sq[1][c] += a[i + c] * a[i + c];
+      }
+      n++;
+    }
+  }
+  if (n < w * h * 0.05) return null;
+  const fix = [0, 1, 2].map((c) => {
+    const mo = sum[0][c] / n, ma = sum[1][c] / n;
+    const so = Math.sqrt(Math.max(0, sq[0][c] / n - mo * mo));
+    const sa = Math.sqrt(Math.max(0, sq[1][c] / n - ma * ma));
+    // Giới hạn hệ số để không làm hỏng ảnh khi ngữ cảnh gần như phẳng màu
+    const gain = sa > 1 && so > 1 ? Math.min(1.25, Math.max(0.8, so / sa)) : 1;
+    return { gain, offset: mo - ma * gain };
+  });
+  for (let i = 0; i < a.length; i += 4) {
+    for (let c = 0; c < 3; c++) a[i + c] = Math.max(0, Math.min(255, a[i + c] * fix[c].gain + fix[c].offset));
+  }
+  octx.putImageData(A, 0, 0);
+  const blob = await new Promise((resolve) => out.toBlob(resolve, 'image/png'));
+  return blob.arrayBuffer();
 }
 
 /** Đoạn script nạp vùng chọn từ độ trong suốt (alpha) của layer có tên cho trước. */

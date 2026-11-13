@@ -17,6 +17,9 @@ export const aiConfig = {
   model: process.env.AI_EDIT_MODEL || 'Qwen/Qwen-Image-Edit-2511',
   // "auto" = nhà cung cấp đầu tiên theo thứ tự trong https://hf.co/settings/inference-providers
   provider: process.env.AI_EDIT_PROVIDER || 'auto',
+  // Cạnh dài tối đa của ảnh gửi cho AI. Giá ~0,03 USD / megapixel: 1024px ≈ 1 MP ≈ 0,03 USD,
+  // 1536px ≈ 2,4 MP ≈ 0,07 USD. Vùng chọn nhỏ vẫn được gửi ở kích thước thật (rẻ hơn nữa).
+  maxSide: Math.min(2048, Math.max(256, Number(process.env.AI_EDIT_MAX_SIDE) || 1024)),
 };
 
 export function aiEditEnabled() {

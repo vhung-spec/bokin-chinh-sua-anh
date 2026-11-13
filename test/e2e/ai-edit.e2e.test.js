@@ -2,14 +2,21 @@
 // để kiểm tra: ảnh gửi đi đúng vùng, kết quả được co giãn/đặt đúng chỗ, mask chỉ thay vùng yêu cầu.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, openApp, tool, json, pixel, freshDoc, solidPng, pngSize } from './helpers.js';
+import { startServer, openApp, tool, json, pixel, freshDoc, solidPng, pngSize, centerSquarePng } from './helpers.js';
 
 const calls = [];
 let mode = 'ok';
+// Nền mà AI giả lập "giữ nguyên" (đặt bằng màu nền tài liệu của từng test) và độ lệch sáng nó gây ra.
+let fakeBg = [255, 0, 0];
+let fakeShift = 0;
 const fakeEditor = async ({ buffer, mimeType, instruction }) => {
-  calls.push({ size: pngSize(buffer), mimeType, instruction });
+  const size = pngSize(buffer);
+  calls.push({ size, mimeType, instruction });
   if (mode === 'error') throw new Error('dịch vụ AI giả lập bị lỗi');
-  return { buffer: solidPng(64, 48, [255, 0, 255]), mimeType: 'image/png' };
+  if (mode === 'solid') return { buffer: solidPng(64, 48, [255, 0, 255]), mimeType: 'image/png' };
+  // Giống mô hình thật: giữ phần ngữ cảnh (có thể lệch sáng một chút), chỉ thay ô ở giữa.
+  const bg = fakeBg.map((v) => Math.min(255, v + fakeShift));
+  return { buffer: centerSquarePng(size.width, size.height, bg, [255, 0, 255]), mimeType: 'image/png' };
 };
 
 // "Claude" giả cho việc dịch câu lệnh Generative Fill (model rẻ)
@@ -45,6 +52,7 @@ test('/api/health báo AI đã bật', async () => {
 });
 
 test('sửa toàn ảnh: kết quả phủ đúng toàn bộ ảnh, nằm ở layer mới trên cùng', async () => {
+  mode = 'solid';
   await freshDoc(page, { width: 600, height: 400, background: '#FF0000' });
   const r = json(await tool(page, 'ai_edit', { instruction: 'Make everything magenta' }));
   assert.equal(calls.at(-1).instruction, 'Make everything magenta');
@@ -58,6 +66,8 @@ test('sửa toàn ảnh: kết quả phủ đúng toàn bộ ảnh, nằm ở la
   assert.deepEqual(info.open_documents, ['Thiết kế mới'], 'đã đóng tài liệu tạm');
   assert.deepEqual(await pixel(page, 10, 10), MAGENTA);
   assert.deepEqual(await pixel(page, 590, 390), MAGENTA);
+  assert.equal(r.color_matched, false, 'sửa toàn ảnh: không có ngữ cảnh để khớp màu');
+  mode = 'ok';
 });
 
 test('sửa theo vùng: chỉ gửi vùng + ngữ cảnh, chỉ thay đúng vùng', async () => {
@@ -74,11 +84,29 @@ test('sửa theo vùng: chỉ gửi vùng + ngữ cảnh, chỉ thay đúng vùn
   assert.deepEqual(await pixel(page, 10, 10), RED);
 });
 
-test('ảnh lớn được thu nhỏ tối đa 1536px trước khi gửi', async () => {
+test('ảnh lớn được thu nhỏ tối đa 1024px (mặc định, AI_EDIT_MAX_SIDE) trước khi gửi', async () => {
+  mode = 'solid';
   await freshDoc(page, { width: 3072, height: 1024, background: '#FF0000' });
   json(await tool(page, 'ai_edit', { instruction: 'x' }));
-  assert.deepEqual(calls.at(-1).size, { width: 1536, height: 512 });
+  assert.deepEqual(calls.at(-1).size, { width: 1024, height: 341 });
   assert.deepEqual(await pixel(page, 3000, 1000), MAGENTA, 'kết quả vẫn phủ hết ảnh gốc');
+  mode = 'ok';
+});
+
+test('khớp màu: AI làm lệch sáng phần ngữ cảnh thì kết quả được chỉnh lại cho liền với ảnh gốc', async () => {
+  await freshDoc(page, { width: 400, height: 300, background: '#808080' });
+  fakeBg = [128, 128, 128];
+  fakeShift = 40; // mô hình trả ảnh sáng hơn 40 đơn vị ở mọi chỗ
+  json(await tool(page, 'select_area', { mode: 'rect', x: 100, y: 75, width: 200, height: 150 }));
+  const r = json(await tool(page, 'ai_edit', { instruction: 'Add something', use_selection: true }));
+  assert.equal(r.color_matched, true);
+  const edge = await pixel(page, 110, 85); // trong vùng chọn, ngoài ô thay đổi: phải liền màu với ảnh gốc
+  assert.ok(Math.abs(edge.r - 128) <= 2 && Math.abs(edge.g - 128) <= 2, `không lộ viền: ${JSON.stringify(edge)}`);
+  const center = await pixel(page, 200, 150);
+  assert.ok(center.r > 190 && center.g < 20 && center.b > 190, `nội dung mới vẫn còn: ${JSON.stringify(center)}`);
+  json(await tool(page, 'select_area', { mode: 'none' }));
+  fakeBg = [255, 0, 0];
+  fakeShift = 0;
 });
 
 test('dịch vụ AI lỗi: tool báo lỗi, tài liệu không bị đổi', async () => {

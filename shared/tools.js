@@ -989,8 +989,9 @@ __ok({ layer: layer.name, bounds: __bounds(layer) });`);
       'Where to edit: use_selection=true uses the selection the user drew in Photopea (any shape — like Photoshop ' +
       'Generative Fill; get_document_info shows whether a selection exists) and only that shape is replaced; or pass ' +
       '`region` (document pixels, around the object with a little room); or neither to edit the whole visible image ' +
-      '(downscaled to at most 1536 px). With a selection or region, the image sent is that area plus ~50% context on each ' +
-      'side, so the target is in the MIDDLE of what the model sees. Write `instruction` in ENGLISH, specific, describing ' +
+      '(downscaled, by default to at most 1024 px). With a selection or region, the image sent is that area plus ~50% context on each ' +
+      'side, so the target is in the MIDDLE of what the model sees; the result is color-matched to the original on that ' +
+      'context so the patch blends in. Write `instruction` in ENGLISH, specific, describing ' +
       'the result, e.g. "Remove the person in the middle and fill the area naturally with the surrounding grass" or "Add a ' +
       'small white cat sitting in the middle of the image, matching the lighting". variations 1-3 (default 1): each result ' +
       'becomes its own layer, only the first visible — tell the user they can pick another. The original stays underneath. ' +

@@ -62,11 +62,13 @@ Trong lúc phát triển, dùng `npm run dev` để server tự khởi động l
 | `CLAUDE_MODEL` | `claude-opus-5-5` | Model sử dụng. `claude-sonnet-5-5` rẻ hơn khoảng một nửa. |
 | `CLAUDE_EFFORT` | `medium` | Mức suy nghĩ: `low` nhanh/rẻ hơn, `high` cẩn thận hơn |
 | `CLAUDE_FAST_MODEL` | `claude-haiku-5-5` | Model rẻ dùng để dịch câu lệnh của bảng Generative Fill sang tiếng Anh |
+| `CLAUDE_MAX_COST_PER_REQUEST` | `0.5` | Giới hạn chi phí ước tính (USD) cho một yêu cầu; vượt thì Bokin tạm dừng và hỏi có làm tiếp không |
 | `CLAUDE_FALLBACKS` | `default` | Khi một yêu cầu bị bộ lọc an toàn từ chối, API tự chạy lại trên model dự phòng. `off` để tắt. |
 | `PORT` / `HOST` | `3000` / `127.0.0.1` | Địa chỉ server. Giữ `127.0.0.1` nếu chưa có đăng nhập, vì server dùng API key của bạn. |
 | `HF_TOKEN` | (trống = tắt) | Token Hugging Face để bật chỉnh sửa bằng AI tạo ảnh |
 | `AI_EDIT_MODEL` | `Qwen/Qwen-Image-Edit-2511` | Mô hình chỉnh ảnh theo chỉ dẫn |
 | `AI_EDIT_PROVIDER` | `auto` | Nhà cung cấp chạy mô hình: `auto`, `fal-ai`, `wavespeed` |
+| `AI_EDIT_MAX_SIDE` | `1024` | Cạnh dài tối đa (px) của ảnh gửi cho AI. 1024 ≈ 0,03 USD, 1536 ≈ 0,07 USD mỗi ảnh (nét hơn khi sửa vùng lớn) |
 
 ### Bật chỉnh sửa bằng AI tạo ảnh (tuỳ chọn)
 
@@ -77,7 +79,7 @@ Các yêu cầu thay đổi **nội dung** ảnh (xoá vật thể, đổi nền
 
 **Dùng như Generative Fill của Photoshop:** khoanh vùng trong Photopea bằng bất kỳ công cụ chọn nào (Lasso, Marquee, Quick Selection, Magic Wand, cọ Quick Mask…), bấm vào ô chat (Bokin hiện dòng *"Đang có vùng chọn …"*), rồi gõ yêu cầu như *"xoá vật thể này"*, *"thêm một chậu cây vào đây"*, *"cho 3 phương án"*. AI chỉ thay **đúng hình dạng vùng chọn** (giữ cả mép mềm), và vùng chọn vẫn còn sau đó để thử lại. Nếu yêu cầu nhiều phương án, mỗi phương án nằm trên một layer riêng; chỉ phương án đầu được hiện, bật/tắt layer để so sánh.
 
-Cách hoạt động: Bokin gửi ảnh (hoặc chỉ vùng cần sửa kèm một phần xung quanh) cho mô hình, rồi đặt kết quả thành **layer mới** phía trên. Ảnh gốc vẫn còn bên dưới; khi sửa theo vùng, Bokin thêm mask để chỉ thay đúng vùng đó. Mỗi lần sửa mất khoảng 10–60 giây và tính phí vào tài khoản Hugging Face (thường vài cent mỗi ảnh; xem bảng giá của nhà cung cấp). Mô hình không tạo được nền trong suốt; muốn tách nền trong suốt thì dùng *Remove BG / Magic Cut* có sẵn trong Photopea.
+Cách hoạt động: Bokin gửi ảnh (hoặc chỉ vùng cần sửa kèm một phần xung quanh) cho mô hình, rồi đặt kết quả thành **layer mới** phía trên. Trước khi ghép, Bokin **khớp màu và độ sáng** của kết quả với ảnh gốc, dựa trên phần xung quanh vùng chọn, để chỗ ghép không lộ viền. Ảnh gốc vẫn còn bên dưới; khi sửa theo vùng, Bokin thêm mask để chỉ thay đúng vùng đó. Mỗi lần sửa mất khoảng 10–60 giây và tính phí vào tài khoản Hugging Face (thường vài cent mỗi ảnh; xem bảng giá của nhà cung cấp). Mô hình không tạo được nền trong suốt; muốn tách nền trong suốt thì dùng *Remove BG / Magic Cut* có sẵn trong Photopea.
 
 Khi chưa có `HF_TOKEN`, công cụ này được ẩn khỏi Claude và Claude sẽ nói rõ là tính năng chưa bật.
 
@@ -237,9 +239,14 @@ Các cách Bokin giảm chi phí:
 | Mỗi tin nhắn tự kèm thông tin ảnh và ảnh xem trước | Claude không tốn 2 lượt gọi đầu chỉ để "nhìn" ảnh |
 | Kết quả chỉnh sửa tự kèm ảnh "sau khi chỉnh" | Không tốn thêm lượt gọi để kiểm tra |
 | Ảnh xem trước 768px | Ít token hơn khoảng 45% so với 1024px |
+| **Giữ cache ấm** khi bạn tạm dừng: cứ 4 phút gửi lại yêu cầu trước với `max_tokens: 0`, tối đa khoảng 20 phút | Lần gõ sau khi nghỉ vài phút không phải ghi lại cả lịch sử (khoảng 5 USD/triệu token), chỉ tốn giá đọc cache (0,20 USD/triệu token) |
+| Không gửi lại ảnh xem trước nếu ảnh không đổi (so chính dữ liệu ảnh, nhận ra cả khi bạn tự chỉnh hay Ctrl+Z trong Photopea) | Khoảng 600–800 token mỗi tin nhắn |
+| Mở ảnh khác thì tự bắt đầu cuộc trò chuyện mới | Không gửi lại lịch sử và ảnh của ảnh cũ |
+| Hiện chi phí từng yêu cầu ("2 lượt gọi · ~0,012 USD") và tổng của cuộc trò chuyện; giới hạn chi phí mỗi yêu cầu (mặc định 0,5 USD) | Thấy rõ tiền đã dùng; một vòng lặp lỗi không thể đốt quá giới hạn |
+| Ảnh gửi AI tạo ảnh tối đa 1024px (chỉnh bằng `AI_EDIT_MAX_SIDE`) | Khoảng 0,03 USD thay vì 0,07 USD cho vùng lớn |
 | Cache cho phần cố định (31 tool + hướng dẫn, khoảng 9.000 token) | Các cuộc trò chuyện sau (trong vòng 5 phút kể từ lần gọi trước) chỉ tính giá đọc cache cho phần này (0,20 USD/triệu token với Opus 5.5 thay vì 5 USD ghi cache) |
 
-Nhờ vậy, một lần chỉnh màu đơn giản qua ô chat có thể chỉ cần **2 lượt gọi Claude** (lượt 1: đọc yêu cầu và chỉnh; lượt 2: xem ảnh kết quả và trả lời), thay vì khoảng 5 lượt như trước. Số lượt thực tế với Claude thật được ghi trong báo cáo của `npm run eval`. Mỗi lượt vẫn gửi lại lịch sử hội thoại, kể cả các ảnh xem trước. Khi chuyển sang ảnh khác hoặc việc khác, bấm **Trò chuyện mới** để cuộc trò chuyện gọn và rẻ.
+Nhờ vậy, một lần chỉnh màu đơn giản qua ô chat có thể chỉ cần **2 lượt gọi Claude** (lượt 1: đọc yêu cầu và chỉnh; lượt 2: xem ảnh kết quả và trả lời), thay vì khoảng 5 lượt như trước. Số lượt thực tế với Claude thật được ghi trong báo cáo của `npm run eval`. Mỗi lượt vẫn gửi lại lịch sử hội thoại, kể cả các ảnh xem trước. Khi chuyển sang việc khác trên cùng ảnh, bấm **Trò chuyện mới** để cuộc trò chuyện gọn và rẻ. Chi phí hiển thị là **ước tính** từ số token API trả về và bảng giá trong `shared/prices.js`.
 
 Giới hạn:
 

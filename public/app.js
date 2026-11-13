@@ -94,6 +94,7 @@ fetch('/api/health')
     }
     if (h.max_cost_per_request > 0) state.budget = h.max_cost_per_request;
     state.aiEnabled = Boolean(h.ai_edit?.enabled);
+    if (h.ai_edit?.max_side) runner.aiMaxSide = h.ai_edit.max_side;
     fillPanel.setEnabled(state.aiEnabled);
     if (state.aiEnabled) {
       for (const text of ['Xoá vật thể trong vùng tôi vừa khoanh', 'Đổi nền thành bãi biển lúc hoàng hôn']) {
