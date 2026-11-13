@@ -249,7 +249,7 @@ export function setupColorPanel({ runner, bridge, log, isBusy, addNote, openImag
     picked.box.hidden = !color;
     if (!color) return;
     picked.swatch.style.background = color;
-    picked.text.textContent = `Màu vừa hút ${color}: gõ trong ô chat "đổi màu này thành…", hoặc`;
+    picked.text.textContent = `Màu vừa hút ${color}. Gõ trong ô chat: "đổi màu này thành…"`;
   }
   picked.select.addEventListener('click', () => guarded(async () => {
     const color = await runner.pickedColor();
