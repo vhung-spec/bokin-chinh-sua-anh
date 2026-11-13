@@ -22,9 +22,13 @@ export const config = {
 };
 
 // Hai bộ cấu hình cố định (có / không có ai_edit) để prompt caching không bị phá.
+// Điểm cache tường minh ở cuối system prompt: tools + system (~9.000 token, giống hệt nhau ở mọi cuộc
+// trò chuyện) được ghi cache một lần rồi đọc lại với giá rẻ, kể cả khi bắt đầu cuộc trò chuyện mới.
+// Phần hội thoại phía sau do cache tự động (cache_control ở cấp request) lo.
+const cachedSystem = (text) => [{ type: 'text', text, cache_control: { type: 'ephemeral' } }];
 const VARIANTS = {
-  withAi: { system: systemPrompt({ aiEdit: true }), tools: toolDefinitions() },
-  withoutAi: { system: systemPrompt({ aiEdit: false }), tools: toolDefinitions().filter((t) => t.name !== 'ai_edit') },
+  withAi: { system: cachedSystem(systemPrompt({ aiEdit: true })), tools: toolDefinitions() },
+  withoutAi: { system: cachedSystem(systemPrompt({ aiEdit: false })), tools: toolDefinitions().filter((t) => t.name !== 'ai_edit') },
 };
 
 /**

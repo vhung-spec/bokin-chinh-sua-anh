@@ -12,7 +12,10 @@ test('buildRequest: model, tools, system, effort, cache và fallback', () => {
   const req = buildRequest(userMsg);
   assert.equal(req.model, config.model);
   assert.equal(req.max_tokens, 16000);
-  assert.ok(req.system.includes('Photopea'));
+  // Điểm cache tường minh ở cuối system (tools + system được cache chung) + cache tự động cho phần hội thoại
+  assert.equal(req.system.length, 1);
+  assert.ok(req.system[0].text.includes('Photopea'));
+  assert.deepEqual(req.system[0].cache_control, { type: 'ephemeral' });
   assert.ok(req.tools.length >= 20);
   assert.deepEqual(req.output_config, { effort: config.effort });
   assert.deepEqual(req.cache_control, { type: 'ephemeral' });
@@ -99,11 +102,11 @@ test('HTTP: /api/health và /api/chat (client giả)', async () => {
 test('buildRequest: chỉ có ai_edit khi server bật AI, system prompt khớp', () => {
   const off = buildRequest(userMsg);
   assert.ok(!off.tools.some((t) => t.name === 'ai_edit'));
-  assert.match(off.system, /not enabled on this server/);
+  assert.match(off.system[0].text, /not enabled on this server/);
   const on = buildRequest(userMsg, { aiEdit: true });
   assert.ok(on.tools.some((t) => t.name === 'ai_edit'));
-  assert.match(on.system, /use ai_edit/);
-  assert.ok(!on.system.includes('{{'), 'đã thay hết placeholder');
+  assert.match(on.system[0].text, /use ai_edit/);
+  assert.ok(!on.system[0].text.includes('{{'), 'đã thay hết placeholder');
   // Cùng cấu hình -> cùng đối tượng (giữ prompt cache ổn định)
   assert.equal(buildRequest(userMsg, { aiEdit: true }).system, on.system);
 });
@@ -183,4 +186,12 @@ test('hasAnthropicCredentials và thông báo khi thiếu key', async () => {
     if (saved.key !== undefined) process.env.ANTHROPIC_API_KEY = saved.key;
     if (saved.token !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = saved.token;
   }
+});
+
+test('prompt caching: tối đa 4 điểm cache, phần cố định giống hệt nhau giữa các cuộc trò chuyện', () => {
+  const a = buildRequest([{ role: 'user', content: 'Cuộc trò chuyện A' }]);
+  const b = buildRequest([{ role: 'user', content: 'Cuộc trò chuyện B khác hẳn' }]);
+  const breakpoints = JSON.stringify(a).split('"cache_control"').length - 1;
+  assert.ok(breakpoints <= 4, `có ${breakpoints} điểm cache`);
+  assert.equal(JSON.stringify(a.tools) + JSON.stringify(a.system), JSON.stringify(b.tools) + JSON.stringify(b.system));
 });
