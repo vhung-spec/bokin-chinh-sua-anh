@@ -6,6 +6,7 @@
 import { PhotopeaBridge } from './photopea-bridge.js';
 import { ToolRunner } from './tool-runner.js';
 import { toolLabel } from '/shared/tools.js';
+import { setupColorPanel } from './quick-panels.js';
 
 const MAX_ROUNDS = 30; // số lượt gọi Claude tối đa cho một yêu cầu
 
@@ -45,6 +46,15 @@ const state = {
 
 const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: 'vi' } } });
 const runner = new ToolRunner(bridge, { onDownload: triggerDownload });
+
+/** Thêm ghi chú hệ thống cho tin nhắn tiếp theo; ghi chú cùng key thay thế ghi chú cũ. */
+function addNote(key, text) {
+  state.pendingNotes = state.pendingNotes.filter((n) => n.key !== key);
+  state.pendingNotes.push({ key, text });
+}
+
+const colorPanel = setupColorPanel({ runner, bridge, isBusy: () => state.busy, addNote });
+rememberOpen(document.getElementById('color-panel'), 'bokin.colorPanelOpen');
 
 // Cho phép kiểm thử tự động / gỡ lỗi từ console.
 window.bokin = { bridge, runner, state, executeTool: (name, input) => runner.execute(name, input) };
@@ -108,7 +118,7 @@ function submitInput() {
 async function send(text) {
   if (state.busy) return;
   $('selection-hint').hidden = true;
-  const content = state.pendingNotes.map((note) => ({ type: 'text', text: note }));
+  const content = state.pendingNotes.map((note) => ({ type: 'text', text: note.text }));
   state.pendingNotes = [];
   content.push({ type: 'text', text });
   state.messages.push({ role: 'user', content });
@@ -258,7 +268,8 @@ async function openFile(file) {
     setStatus(`Đang mở ${file.name}…`);
     await bridge.openFile(await file.arrayBuffer(), file.name);
     runner.undoDepth = 0;
-    state.pendingNotes.push(`(Ghi chú hệ thống: người dùng vừa mở ảnh "${file.name}" trong Photopea; đây là tài liệu đang hoạt động.)`);
+    colorPanel.reset();
+    addNote('opened-file', `(Ghi chú hệ thống: người dùng vừa mở ảnh "${file.name}" trong Photopea; đây là tài liệu đang hoạt động.)`);
     renderInfo(`Đã mở ảnh: ${file.name}`);
     setStatus('Photopea đã sẵn sàng', 'ok');
   } catch (error) {
@@ -391,6 +402,16 @@ function summarizeInput(name, input) {
     .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
     .join(', ')
     .slice(0, 200);
+}
+
+/** Nhớ trạng thái mở/đóng của một bảng <details> (chỉ là tiện ích, không bắt buộc). */
+function rememberOpen(details, key) {
+  try {
+    if (localStorage.getItem(key) === '1') details.open = true;
+    details.addEventListener('toggle', () => {
+      try { localStorage.setItem(key, details.open ? '1' : '0'); } catch { /* bỏ qua */ }
+    });
+  } catch { /* localStorage có thể bị chặn */ }
 }
 
 function setStatus(text, kind = '') {

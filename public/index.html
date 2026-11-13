@@ -41,6 +41,18 @@
 
       <div class="notice" id="notice" hidden></div>
 
+      <details class="quick-panel" id="color-panel">
+        <summary>Màu nhanh <span class="free">không tốn phí</span></summary>
+        <div class="preset-grid" id="preset-grid"></div>
+        <label class="strength">
+          <span>Độ mạnh</span>
+          <input type="range" id="preset-strength" min="10" max="100" step="5" value="60" />
+          <output id="strength-value">60%</output>
+        </label>
+        <div class="quick-actions" id="quick-actions"></div>
+        <div class="quick-status" id="color-status" aria-live="polite"></div>
+      </details>
+
       <section class="chat" id="chat" aria-live="polite">
         <div class="empty" id="empty">
           <h2>Chỉnh ảnh bằng câu lệnh</h2>
