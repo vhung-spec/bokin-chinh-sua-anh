@@ -45,6 +45,12 @@ const state = {
   usage: [],
   /** server có bật chỉnh sửa bằng AI tạo ảnh không */
   aiEnabled: false,
+  /** yêu cầu gần nhất đã gửi Claude (để giữ cache ấm) và thời điểm bắt đầu gửi */
+  lastRequest: null,
+  /** khoảng cách giữa các lần giữ cache ấm (ms) và số lần tối đa cho mỗi lần tạm dừng */
+  keepAliveMs: 240_000,
+  keepAliveMax: 5,
+  keepAliveTimer: null,
 };
 
 const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: 'vi' } } });
@@ -152,6 +158,7 @@ async function snapshotBlocks() {
 
 async function runLoop() {
   if (!state.busy) setBusy(true);
+  stopKeepAlive();
   try {
     await agentLoop();
   } catch (error) {
@@ -159,7 +166,46 @@ async function runLoop() {
     else renderError(error.message, () => runLoop());
   } finally {
     setBusy(false);
+    scheduleKeepAlive();
   }
+}
+
+/**
+ * Cache của Claude giữ 5 phút kể từ lúc BẮT ĐẦU yêu cầu đọc/ghi nó. Khi người dùng tạm dừng (đang ngắm ảnh,
+ * chỉnh tay trong Photopea...), gửi một yêu cầu max_tokens: 0 trước khi hết hạn để làm mới, tốn giá đọc cache
+ * (~0,2 USD / triệu token với Opus 5.5) thay vì phải ghi lại cả lịch sử (~5 USD / triệu token) ở lần gõ sau.
+ */
+function scheduleKeepAlive(count = 0) {
+  stopKeepAlive();
+  const last = state.lastRequest;
+  if (!last || count >= state.keepAliveMax) return;
+  const delay = Math.max(0, last.startedAt + state.keepAliveMs - Date.now());
+  state.keepAliveTimer = setTimeout(async () => {
+    state.keepAliveTimer = null;
+    if (state.busy || state.lastRequest !== last) return;
+    // Nếu đã quá 5 phút (máy ngủ, tab bị treo...) thì cache đã hết hạn: gửi lúc này chỉ tốn tiền ghi lại vô ích.
+    if (Date.now() - last.startedAt > Math.max(state.keepAliveMs + 30_000, 290_000)) return;
+    const startedAt = Date.now();
+    try {
+      const res = await fetch('/api/keepalive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: last.messages }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      if (data.usage) state.usage.push({ model: data.model, kind: 'keepalive', ...data.usage });
+    } catch {
+      return;
+    }
+    last.startedAt = startedAt;
+    scheduleKeepAlive(count + 1);
+  }, delay);
+}
+
+function stopKeepAlive() {
+  clearTimeout(state.keepAliveTimer);
+  state.keepAliveTimer = null;
 }
 
 async function agentLoop() {
@@ -238,6 +284,8 @@ async function attachAfterPreview(toolUses, results) {
 async function callClaude() {
   const thinking = renderThinking();
   state.abort = new AbortController();
+  // Ghi lại đúng yêu cầu này: giữ cache ấm phải gửi lại y hệt (không được kết thúc bằng câu trả lời của Claude).
+  state.lastRequest = { messages: state.messages.slice(), startedAt: Date.now() };
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -353,6 +401,8 @@ els.newChat.addEventListener('click', () => {
   }
   state.messages = [];
   state.pendingNotes = [];
+  state.lastRequest = null;
+  stopKeepAlive();
   els.chat.replaceChildren(els.empty);
   els.empty.hidden = false;
   els.input.focus();

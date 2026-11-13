@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   config, runTurn, checkMessages, describeError, getClient, hasAnthropicCredentials, MISSING_KEY_MESSAGE,
-  translateFillPrompt, RefusalError, REMOVE_INSTRUCTION,
+  translateFillPrompt, RefusalError, REMOVE_INSTRUCTION, keepAlive,
 } from './chat.js';
 import { aiConfig, aiEditEnabled, editWithHuggingFace, checkAiEditBody, describeAiError } from './ai-edit.js';
 
@@ -46,6 +46,21 @@ export function createApp({ anthropic, aiEditor } = {}) {
     } catch (error) {
       const { status, message } = describeError(error);
       console.error(`[chat] ${status}: ${error?.message ?? error}`);
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Giữ cache ấm khi người dùng tạm dừng (xem keepAlive trong chat.js).
+  app.post('/api/keepalive', async (req, res) => {
+    const messages = req.body?.messages;
+    const problem = checkMessages(messages);
+    if (problem) return res.status(400).json({ error: problem });
+    if (!anthropic && !hasAnthropicCredentials()) return res.status(500).json({ error: MISSING_KEY_MESSAGE });
+    try {
+      res.json(await keepAlive(messages, anthropic ?? getClient(), { aiEdit: Boolean(editor) }));
+    } catch (error) {
+      const { status, message } = describeError(error);
+      console.error(`[keepalive] ${status}: ${error?.message ?? error}`);
       res.status(status).json({ error: message });
     }
   });

@@ -14,6 +14,12 @@ const mock = http.createServer(async (req, res) => {
   for await (const chunk of req) raw += chunk;
   const body = JSON.parse(raw);
   requests.push({ url: req.url, headers: req.headers, body });
+  if (body.max_tokens === 0) {
+    // Yêu cầu giữ cache ấm: không sinh output, chỉ đọc cache
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 'keepalive', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: 'max_tokens', usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 12000 } }));
+    return;
+  }
   if (failNext) {
     const f = failNext;
     failNext = null;
@@ -171,6 +177,38 @@ test('chỉnh màu chỉ mất 2 lượt gọi: tin nhắn kèm sẵn trạng th
   assert.notEqual(result.content.find((b) => b.type === 'image').source.data, snapshotImage.source.data, 'ảnh sau khác ảnh trước');
   // Ảnh xem trước mặc định 768px
   assert.match(userMsg.find((b) => b.type === 'text' && /Ảnh xem trước/.test(b.text)).text, /300x200/);
+  scenario = 'design';
+});
+
+test('giữ cache ấm khi tạm dừng: gửi lại đúng yêu cầu trước với max_tokens 0, tối đa N lần, dừng khi trò chuyện mới', async () => {
+  scenario = 'color';
+  await page.evaluate(() => Object.assign(window.bokin.state, { keepAliveMs: 400, keepAliveMax: 2 }));
+  const replies = await page.locator('.msg.assistant').count();
+  await page.fill('#input', 'Cân bằng lại màu');
+  await page.press('#input', 'Enter');
+  // Chờ câu trả lời MỚI (câu trả lời giống hệt của tình huống trước vẫn còn trên màn hình)
+  await page.waitForFunction((n) => document.querySelectorAll('.msg.assistant').length > n && !window.bokin.state.busy, replies, { timeout: 60_000 });
+  const lastReal = requests.filter((r) => r.body.max_tokens !== 0).at(-1);
+  const before = requests.length;
+  await page.waitForTimeout(1800);
+  const keepalives = requests.slice(before).filter((r) => r.body.max_tokens === 0);
+  assert.equal(keepalives.length, 2, 'đúng số lần tối đa');
+  for (const k of keepalives) {
+    assert.deepEqual(k.body.messages, lastReal.body.messages, 'gửi lại đúng yêu cầu trước');
+    assert.deepEqual({ ...k.body, max_tokens: lastReal.body.max_tokens }, lastReal.body, 'tham số khác giống hệt => trúng cache');
+  }
+  const kinds = await page.evaluate(() => window.bokin.state.usage.filter((u) => u.kind === 'keepalive').length);
+  assert.equal(kinds, 2, 'ghi nhận chi phí giữ cache');
+
+  // Gửi tin nhắn mới rồi bấm "Trò chuyện mới": không còn giữ cache cho cuộc cũ
+  await page.fill('#input', 'Cân bằng thêm');
+  await page.press('#input', 'Enter');
+  await page.waitForFunction(() => !window.bokin.state.busy);
+  await page.click('#new-chat-btn');
+  const after = requests.length;
+  await page.waitForTimeout(1200);
+  assert.equal(requests.slice(after).filter((r) => r.body.max_tokens === 0).length, 0);
+  await page.evaluate(() => Object.assign(window.bokin.state, { keepAliveMs: 240_000, keepAliveMax: 5 }));
   scenario = 'design';
 });
 

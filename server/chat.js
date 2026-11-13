@@ -147,6 +147,17 @@ export async function runTurn(messages, anthropic = getClient(), { aiEdit = fals
   };
 }
 
+/**
+ * Giữ cache ấm khi người dùng tạm dừng: gửi lại ĐÚNG yêu cầu trước đó với max_tokens: 0.
+ * API chỉ đọc lại phần đã cache (giá đọc cache, không sinh output) và làm mới thời hạn 5 phút,
+ * nên lần gõ tiếp theo không phải ghi lại toàn bộ lịch sử (kể cả ảnh) với giá ghi cache.
+ * Phải giữ nguyên thinking/effort/tools/system như yêu cầu thật để trúng cùng mục cache.
+ */
+export async function keepAlive(messages, anthropic = getClient(), { aiEdit = false } = {}) {
+  const response = await anthropic.beta.messages.create({ ...buildRequest(messages, { aiEdit }), max_tokens: 0 });
+  return { model: response.model, usage: response.usage };
+}
+
 /** Chuyển lỗi SDK thành mã HTTP + thông báo tiếng Việt. */
 export function describeError(error) {
   if (error instanceof Anthropic.AuthenticationError) {

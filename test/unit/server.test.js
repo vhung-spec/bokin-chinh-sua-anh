@@ -245,3 +245,15 @@ test('HTTP: /api/fill-instruction dịch bằng model rẻ; để trống thì k
     server.close();
   }
 });
+
+test('keepAlive: gửi lại y hệt yêu cầu thật, chỉ đổi max_tokens thành 0', async () => {
+  const { keepAlive } = await import('../../server/chat.js');
+  let sent;
+  const fake = { beta: { messages: { create: async (p) => { sent = p; return { model: p.model, usage: { cache_read_input_tokens: 12000 } }; } } } };
+  const msgs = [{ role: 'user', content: 'Làm sáng ảnh' }];
+  const out = await keepAlive(msgs, fake, { aiEdit: true });
+  const real = buildRequest(msgs, { aiEdit: true });
+  assert.equal(sent.max_tokens, 0);
+  assert.deepEqual({ ...sent, max_tokens: real.max_tokens }, real, 'mọi thứ khác giống hệt => trúng cùng mục cache');
+  assert.equal(out.usage.cache_read_input_tokens, 12000);
+});
