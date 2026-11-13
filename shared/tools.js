@@ -136,7 +136,7 @@ __ok({
         },
         max_size: {
           type: 'integer', minimum: 256, maximum: 1568,
-          description: 'Cạnh dài tối đa của ảnh xem trước (mặc định 1024).',
+          description: 'Cạnh dài tối đa của ảnh xem trước (mặc định 768; tăng lên khi cần xem chi tiết toàn ảnh).',
         },
       },
       additionalProperties: false,

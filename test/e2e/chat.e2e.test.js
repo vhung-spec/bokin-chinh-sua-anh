@@ -7,6 +7,7 @@ import { startServer, openApp, tool, json } from './helpers.js';
 
 const requests = [];
 let failNext = null; // { status, body } để giả lập lỗi
+let scenario = 'design'; // 'design' (tạo ảnh + chữ) | 'color' (một lần chỉnh màu)
 
 const mock = http.createServer(async (req, res) => {
   let raw = '';
@@ -25,7 +26,11 @@ const mock = http.createServer(async (req, res) => {
   const hasToolResult = Array.isArray(lastUser.content) && lastUser.content.some((b) => b.type === 'tool_result');
   const ids = new Set(body.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).map((b) => b.tool_use_id).filter(Boolean));
   let reply;
-  if (!hasToolResult) {
+  if (scenario === 'color') {
+    reply = hasToolResult
+      ? { content: [{ type: 'text', text: 'Đã cân bằng lại màu.' }], stop_reason: 'end_turn' }
+      : { content: [{ type: 'tool_use', id: `tu_c${requests.length}`, name: 'adjust_color_balance', input: { midtones: [0, 0, 25] } }], stop_reason: 'tool_use' };
+  } else if (!hasToolResult) {
     reply = {
       content: [
         { type: 'thinking', thinking: '', signature: 'sig-1' },
@@ -134,6 +139,35 @@ test('nút "Trò chuyện mới" xoá lịch sử', async () => {
   await page.click('#new-chat-btn');
   assert.equal(await page.evaluate(() => window.bokin.state.messages.length), 0);
   assert.equal(await page.isVisible('#empty'), true);
+});
+
+test('chỉnh màu chỉ mất 2 lượt gọi: tin nhắn kèm sẵn trạng thái ảnh, kết quả kèm ảnh sau khi chỉnh', async () => {
+  scenario = 'color';
+  json(await tool(page, 'create_document', { width: 300, height: 200, background: '#C8B060' }));
+  const start = requests.length;
+  await page.fill('#input', 'Ảnh bị ám vàng, cân bằng lại màu');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.msg.assistant >> text=Đã cân bằng lại màu', { timeout: 60_000 });
+  assert.equal(requests.length - start, 2, 'chỉ 2 lượt gọi Claude');
+
+  // Lượt 1: tin nhắn người dùng mở đầu bằng trạng thái tự động (thông tin + ảnh), câu lệnh ở cuối
+  const userMsg = requests[start].body.messages.at(-1).content;
+  assert.match(userMsg[0].text, /Trạng thái tự động/);
+  assert.match(userMsg[0].text, /"width":300/);
+  const snapshotImage = userMsg.find((b) => b.type === 'image');
+  assert.ok(snapshotImage, 'kèm ảnh xem trước');
+  assert.equal(userMsg.at(-1).text, 'Ảnh bị ám vàng, cân bằng lại màu');
+
+  // Lượt 2: tool_result của lần chỉnh màu có kèm ảnh "sau khi chỉnh"
+  const result = requests[start + 1].body.messages.at(-1).content[0];
+  assert.equal(result.type, 'tool_result');
+  assert.ok(Array.isArray(result.content));
+  assert.ok(result.content.some((b) => b.type === 'text' && /Ảnh sau khi chỉnh/.test(b.text)));
+  assert.ok(result.content.some((b) => b.type === 'image'));
+  assert.notEqual(result.content.find((b) => b.type === 'image').source.data, snapshotImage.source.data, 'ảnh sau khác ảnh trước');
+  // Ảnh xem trước mặc định 768px
+  assert.match(userMsg.find((b) => b.type === 'text' && /Ảnh xem trước/.test(b.text)).text, /300x200/);
+  scenario = 'design';
 });
 
 test('không có lỗi JavaScript trên trang', () => {

@@ -9,6 +9,9 @@ import { toolLabel } from '/shared/tools.js';
 import { setupColorPanel, setupFillPanel } from './quick-panels.js';
 
 const MAX_ROUNDS = 30; // số lượt gọi Claude tối đa cho một yêu cầu
+const PREVIEW_SIZE = 768; // cạnh dài ảnh xem trước gửi cho Claude (đủ để đánh giá màu, ít token hơn 1024)
+// Các tool không làm thay đổi ảnh nhìn thấy được: không cần gắn ảnh "sau khi chỉnh".
+const NON_VISUAL_TOOLS = new Set(['get_document_info', 'view_image', 'export_image', 'select_area', 'select_by_color', 'create_document']);
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -121,16 +124,34 @@ function submitInput() {
 async function send(text) {
   if (state.busy) return;
   $('selection-hint').hidden = true;
-  const content = state.pendingNotes.map((note) => ({ type: 'text', text: note.text }));
+  setBusy(true);
+  renderUser(text);
+  // Gửi kèm trạng thái hiện tại (thông tin ảnh + ảnh xem trước) để Claude không phải tốn 2 lượt gọi đầu tiên.
+  const snapshot = await snapshotBlocks().catch(() => []);
+  const content = [...snapshot, ...state.pendingNotes.map((note) => ({ type: 'text', text: note.text }))];
   state.pendingNotes = [];
   content.push({ type: 'text', text });
   state.messages.push({ role: 'user', content });
-  renderUser(text);
   await runLoop();
 }
 
+/** Ảnh chụp trạng thái tự động gửi kèm mỗi tin nhắn của người dùng. */
+async function snapshotBlocks() {
+  const info = await runner.execute('get_document_info', {});
+  if (info.isError) return [];
+  const data = JSON.parse(info.content);
+  if (!data.has_document) return [{ type: 'text', text: '(Trạng thái tự động: chưa có ảnh nào đang mở trong Photopea.)' }];
+  const blocks = [{
+    type: 'text',
+    text: `(Trạng thái tự động lúc người dùng gửi tin nhắn; không cần gọi get_document_info hay view_image để xem lại.)\nThông tin ảnh: ${JSON.stringify(data)}`,
+  }];
+  const preview = await runner.execute('view_image', { max_size: PREVIEW_SIZE });
+  if (!preview.isError) blocks.push(...preview.content);
+  return blocks;
+}
+
 async function runLoop() {
-  setBusy(true);
+  if (!state.busy) setBusy(true);
   try {
     await agentLoop();
   } catch (error) {
@@ -191,10 +212,27 @@ async function agentLoop() {
         ...(outcome.isError ? { is_error: true } : {}),
       });
     }
+    await attachAfterPreview(toolUses, results);
     // Luôn gửi đủ tool_result cho mọi tool_use để lịch sử hợp lệ.
     state.messages.push({ role: 'user', content: results });
   }
   renderInfo(`Đã chạy ${MAX_ROUNDS} lượt cho yêu cầu này. Gõ "tiếp tục" nếu muốn làm tiếp.`);
+}
+
+/**
+ * Sau một lượt có chỉnh sửa nhìn thấy được, gắn ảnh kết quả vào tool_result thành công cuối cùng,
+ * để Claude kiểm tra ngay mà không phải gọi thêm view_image (tiết kiệm một lượt gọi).
+ */
+async function attachAfterPreview(toolUses, results) {
+  if (toolUses.some((t) => t.name === 'view_image')) return;
+  let index = -1;
+  results.forEach((r, i) => { if (!r.is_error && !NON_VISUAL_TOOLS.has(toolUses[i].name)) index = i; });
+  if (index < 0) return;
+  const preview = await runner.execute('view_image', { max_size: PREVIEW_SIZE });
+  if (preview.isError) return;
+  const r = results[index];
+  const base = typeof r.content === 'string' ? [{ type: 'text', text: r.content }] : r.content;
+  r.content = [...base, { type: 'text', text: 'Ảnh sau khi chỉnh (tự động):' }, ...preview.content];
 }
 
 async function callClaude() {

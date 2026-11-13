@@ -92,7 +92,7 @@ __ok({ bounds: __bounds(L) });`));
     return ok(JSON.stringify(data));
   }
 
-  async _viewImage({ region, max_size: maxSize = 1024 }) {
+  async _viewImage({ region, max_size: maxSize = 768 }) {
     const exported = await this.bridge.exportDocument('jpg:0.92');
     if (!exported) return fail('Chưa có ảnh nào đang mở.');
     const bitmap = await createImageBitmap(new Blob([exported.buffer], { type: 'image/jpeg' }));

@@ -237,7 +237,7 @@ test('view_image trả ảnh xem trước + tỉ lệ; vùng phóng to', async (
   await freshDoc(page, { width: 2000, height: 1000, background: '#20A040' });
   const full = await tool(page, 'view_image');
   assert.equal(full.isError, false);
-  assert.match(full.content[0].text, /1024x512/);
+  assert.match(full.content[0].text, /768x384/, 'mặc định 768px');
   assert.match(full.content[0].text, /2000x1000/);
   assert.equal(full.content[1].type, 'image');
   assert.ok(full.content[1].source.data.length > 100);
