@@ -74,8 +74,8 @@
           </div>
         </div>
         <ol class="start-tips">
-          <li><strong>Màu nhanh</strong>: bấm một phong cách màu, miễn phí.</li>
-          <li><strong>Tạo bằng AI</strong>: khoanh vùng rồi mô tả để xoá hoặc thêm vật thể.</li>
+          <li><strong>Màu nhanh</strong>: khoanh hoặc tô vùng, rồi bấm một phong cách màu hay lấy màu theo ảnh mẫu, miễn phí.</li>
+          <li id="start-tip-fill"><strong>Tạo bằng AI</strong>: khoanh vùng rồi mô tả để xoá hoặc thêm vật thể.</li>
           <li><strong>Trò chuyện</strong>: gõ bất kỳ yêu cầu nào bằng tiếng Việt.</li>
         </ol>
       </section>
@@ -100,6 +100,7 @@
               <button type="button">Làm ảnh sáng hơn và màu tươi hơn một chút</button>
               <button type="button">Ảnh bị ám vàng, cân bằng lại màu giúp mình</button>
               <button type="button">Chỉ làm bầu trời xanh hơn, giữ nguyên màu da</button>
+              <button type="button">Làm vùng tôi vừa khoanh sáng và ấm hơn, mép hoà vào xung quanh</button>
               <button type="button">Cắt ảnh thành hình vuông, giữ chủ thể ở giữa</button>
               <button type="button">Thêm chữ "GIẢM 50%" màu đỏ ở góc trên bên phải</button>
             </div>
@@ -124,6 +125,25 @@
 
       <!-- Tab: Màu nhanh -->
       <section class="tab-panel scroll-panel" id="panel-color" role="tabpanel" aria-labelledby="tab-color" hidden>
+        <h3 class="section-title">Vùng cần chỉnh</h3>
+        <div class="select-tools" id="region-tools">
+          <button type="button" data-paint title="Tô bằng cọ lên vùng cần chỉnh">🖌 Tô vùng</button>
+          <button type="button" data-tool="lassoTool" title="Vẽ tự do quanh vùng">Lasso</button>
+          <button type="button" data-tool="quickSelectTool" title="Tô lên vật thể, Photopea tự bắt viền">Chọn nhanh</button>
+          <button type="button" data-tool="magicWandTool" title="Bấm vào vùng cùng màu (ví dụ bầu trời)">Đũa thần</button>
+          <button type="button" data-tool="marqueeRectTool" title="Kéo một khung chữ nhật">Chữ nhật</button>
+          <button type="button" data-tool="marqueeEllipTool" title="Kéo một khung elip">Elip</button>
+          <button type="button" data-select="invert" title="Đảo ngược vùng chọn: chỉnh phần còn lại">Đảo</button>
+          <button type="button" data-select="none" title="Bỏ vùng chọn: chỉnh cả ảnh">Bỏ chọn</button>
+        </div>
+        <div class="region-edge" id="region-edge">
+          <span>Mép vùng:</span>
+          <button type="button" data-edge="soften" data-amount="10" title="Làm mềm mép 10 px để chỗ chỉnh hoà vào xung quanh">Làm mềm</button>
+          <button type="button" data-edge="expand" data-amount="6" title="Nới vùng chọn rộng ra 6 px">Nới rộng</button>
+          <button type="button" data-edge="contract" data-amount="6" title="Thu vùng chọn hẹp lại 6 px">Thu hẹp</button>
+        </div>
+        <div class="fill-selection" id="region-info"></div>
+
         <h3 class="section-title">Phong cách màu</h3>
         <div class="preset-grid" id="preset-grid"></div>
         <label class="strength">
@@ -142,13 +162,6 @@
               <div class="muted small">Ảnh có tông màu bạn muốn (ảnh mẫu của khách, ảnh trên mạng…).</div>
             </div>
             <button type="button" class="btn small" id="match-pick">Chọn ảnh mẫu</button>
-          </div>
-          <div class="match-step">Khoanh hoặc tô vùng cần chỉnh (bỏ trống = cả ảnh):</div>
-          <div class="select-tools" id="match-tools">
-            <button type="button" data-paint title="Tô bằng cọ lên vùng cần chỉnh">🖌 Tô vùng</button>
-            <button type="button" data-tool="lassoTool" title="Vẽ tự do quanh vùng">Lasso</button>
-            <button type="button" data-tool="quickSelectTool" title="Tô lên vật thể, Photopea tự bắt viền">Chọn nhanh</button>
-            <button type="button" data-select="none" title="Bỏ vùng chọn">Bỏ chọn</button>
           </div>
           <div class="fill-selection" id="match-selection"></div>
           <label class="strength">

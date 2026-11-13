@@ -635,19 +635,27 @@ __ok({ layer: layer.name, filter: ${lit(filter)} });`);
     description:
       'Make or change the selection. Later adjustments, filters and fill/clear only affect the selected area. ' +
       'mode: rect / ellipse (need x, y, width, height), all, none (deselect), invert. feather softens the edge (px). ' +
+      'To change the CURRENT selection\'s edge: soften (feather it by `amount` px), expand or contract (by `amount` px). ' +
       'Remember to select none when you are done with local edits.',
     input_schema: {
       type: 'object',
       properties: {
-        mode: { type: 'string', enum: ['rect', 'ellipse', 'all', 'none', 'invert'] },
+        mode: { type: 'string', enum: ['rect', 'ellipse', 'all', 'none', 'invert', 'soften', 'expand', 'contract'] },
         x: { type: 'number' }, y: { type: 'number' },
         width: { type: 'number', minimum: 1 }, height: { type: 'number', minimum: 1 },
         feather: { type: 'number', minimum: 0, maximum: 500 },
+        amount: { type: 'number', minimum: 1, maximum: 200, description: 'Số pixel làm mềm / nới / thu (soften, expand, contract).' },
       },
       required: ['mode'],
       additionalProperties: false,
     },
-    build({ mode, x, y, width, height, feather = 0 }) {
+    build({ mode, x, y, width, height, feather = 0, amount = 8 }) {
+      if (mode === 'soften' || mode === 'expand' || mode === 'contract') {
+        const call = { soften: 'feather', expand: 'expand', contract: 'contract' }[mode];
+        // Không có vùng chọn thì Photopea dừng script: ToolRunner kiểm tra trước khi chạy (EDGE_MODES).
+        return wrap(`doc.selection.${call}(${num(amount)});
+__ok({ mode: ${lit(mode)}, amount: ${num(amount)} });`);
+      }
       let body;
       if (mode === 'rect' || mode === 'ellipse') {
         if (![x, y, width, height].every(has)) throw new Error('Chế độ rect/ellipse cần x, y, width, height.');

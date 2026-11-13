@@ -184,17 +184,48 @@ test('tab Màu nhanh: chọn ảnh mẫu, khoanh vùng, Áp; kéo độ mạnh t
 test('nút Tô vùng: đổi thành "Xong tô" ở mọi tab; tô xong thì vùng tô là vùng chọn', async () => {
   await twoHalves();
   await page.click('#tab-color');
-  await page.click('#match-tools button[data-paint]');
-  await page.waitForSelector('#match-tools button[data-paint].active');
-  assert.equal((await page.textContent('#match-tools button[data-paint]')).trim(), '✓ Xong tô');
+  await page.click('#region-tools button[data-paint]');
+  await page.waitForSelector('#region-tools button[data-paint].active');
+  assert.equal((await page.textContent('#region-tools button[data-paint]')).trim(), '✓ Xong tô');
   assert.equal((await page.textContent('#select-tools button[data-paint]')).trim(), '✓ Xong tô', 'tab Tạo bằng AI cũng đổi');
-  assert.match(await page.textContent('#match-selection'), /Tô màu đen/);
+  assert.match(await page.textContent('#region-info'), /Tô màu đen/);
   await run(`var c = new SolidColor(); c.rgb.hexValue = '000000'; var d = app.activeDocument;
 d.selection.select([[30,20],[90,20],[90,80],[30,80]]); d.selection.fill(c); d.selection.deselect(); app.echoToOE('p');`);
-  await page.click('#match-tools button[data-paint]');
+  await page.click('#region-tools button[data-paint]');
   await page.waitForSelector('#match-selection:has-text("Sẽ chỉnh vùng chọn 60×60 px")');
-  assert.equal((await page.textContent('#match-tools button[data-paint]')).trim(), '🖌 Tô vùng');
+  assert.equal((await page.textContent('#region-tools button[data-paint]')).trim(), '🖌 Tô vùng');
   assert.deepEqual(json(await tool(page, 'get_document_info')).selection, { x: 30, y: 20, width: 60, height: 60 });
+});
+
+test('mép vùng: Làm mềm / Nới rộng / Thu hẹp chỉ bấm được khi có vùng chọn và đổi đúng vùng chọn', async () => {
+  await twoHalves();
+  await page.click('#tab-color');
+  await page.dispatchEvent('#photopea', 'mouseleave');
+  await page.waitForSelector('#region-info:has-text("Chưa có vùng chọn")');
+  assert.equal(await page.isDisabled('#region-edge button[data-edge="expand"]'), true);
+  const none = await tool(page, 'select_area', { mode: 'soften', amount: 5 });
+  assert.equal(none.isError, true);
+  assert.match(none.content, /Chưa có vùng chọn để làm mềm mép/);
+
+  json(await tool(page, 'select_area', { mode: 'rect', x: 50, y: 30, width: 60, height: 40 }));
+  await page.dispatchEvent('#photopea', 'mouseleave');
+  await page.waitForSelector('#region-info:has-text("Đang chọn vùng 60×40 px")');
+  await page.click('#region-edge button[data-edge="expand"]');
+  await page.waitForSelector('#region-info:has-text("72×52")');
+  assert.deepEqual(json(await tool(page, 'get_document_info')).selection, { x: 44, y: 24, width: 72, height: 52 });
+  await page.click('#region-edge button[data-edge="contract"]');
+  await page.waitForFunction(() => /Đang chọn vùng 6\d×4\d px/.test(document.getElementById('region-info').textContent));
+  const back = json(await tool(page, 'get_document_info')).selection;
+  assert.ok(back.width < 72 && back.height < 52, `thu hẹp lại: ${JSON.stringify(back)}`);
+  await page.click('#region-edge button[data-edge="soften"]');
+  await page.waitForSelector('#color-status:has-text("Đã làm mềm mép vùng chọn 10 px")');
+  // mép mềm: điểm ngay trong mép chỉ được chỉnh một phần khi áp màu ảnh mẫu
+  await setReference(GREEN);
+  json(await tool(page, 'match_reference_colors', {}));
+  const edge = await pixel(page, 51, 50);
+  const mid = await pixel(page, 80, 50);
+  assert.ok(mid.g > mid.r + 60 && mid.g > mid.b + 60, `giữa vùng đã ngả xanh lá: ${JSON.stringify(mid)}`);
+  assert.ok(edge.g < mid.g - 20 && edge.r > mid.r + 20, `sát mép chỉ đổi một phần: ${JSON.stringify(edge)}`);
 });
 
 test('không có lỗi JavaScript trên trang', () => {

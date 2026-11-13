@@ -26,7 +26,7 @@ Claude **tự xem ảnh** (trước và sau khi sửa) để chọn vị trí đ
 
 ## Cách dùng
 
-Khung bên phải gồm **thanh công cụ** dùng chung và **ba tab**, mỗi lúc chỉ hiện một tab nên không rối mắt. Bokin nhớ tab bạn dùng lần trước.
+Khung bên phải gồm **thanh công cụ** dùng chung và các **tab**, mỗi lúc chỉ hiện một tab nên không rối mắt. Bokin nhớ tab bạn dùng lần trước. Tab **Tạo bằng AI** chỉ hiện khi máy chủ bật AI tạo ảnh (có `HF_TOKEN`, không đặt `AI_EDIT=off`); khi tắt, Bokin tập trung vào chỉnh màu và chỉnh vùng.
 
 **Thanh công cụ** (luôn ở trên cùng):
 
@@ -39,10 +39,10 @@ Khung bên phải gồm **thanh công cụ** dùng chung và **ba tab**, mỗi l
 
 Khi chưa có ảnh, thẻ **Bắt đầu** hiện ra: mở ảnh từ máy hoặc tạo ảnh trống theo cỡ có sẵn (vuông 1080, bìa Facebook 1200×630, story 1080×1920, 16:9 1280×720, A4).
 
-**Ba tab:**
+**Các tab:**
 
 1. **Trò chuyện**: gõ yêu cầu tiếng Việt, hoặc bấm một câu gợi ý. Sau mỗi câu trả lời có chỉnh sửa, Bokin hiện các nút **Mạnh hơn**, **Nhẹ hơn**, **Hoàn tác** (gỡ mọi chỉnh sửa của câu lệnh đó) và **Tải JPG**, để khỏi phải gõ lại.
-2. **Màu nhanh** (miễn phí, không gọi Claude): 8 phong cách màu với thanh độ mạnh, cùng các nút Tự cân màu, Ấm hơn, Lạnh hơn, Tươi hơn, Nhạt hơn. Bấm một phong cách khác hoặc kéo thanh độ mạnh thì Bokin **thay** phong cách vừa áp, không chồng lên, nên thử nhiều kiểu thoải mái. Nếu đang có vùng chọn, chỉ vùng đó được chỉnh.
+2. **Màu nhanh** (miễn phí, không gọi Claude). Trên cùng là hàng **Vùng cần chỉnh**, dùng chung cho mọi chỉnh màu trong tab: **🖌 Tô vùng**, Lasso, Chọn nhanh, Đũa thần, Chữ nhật, Elip, **Đảo** (chỉnh phần còn lại), **Bỏ chọn** (chỉnh cả ảnh), và **Mép vùng**: **Làm mềm** (10 px, để chỗ chỉnh hoà vào xung quanh), **Nới rộng** / **Thu hẹp** (6 px). Dòng bên dưới luôn cho biết đang chỉnh vùng nào. Tiếp theo là 8 phong cách màu với thanh độ mạnh, cùng các nút Tự cân màu, Ấm hơn, Lạnh hơn, Tươi hơn, Nhạt hơn. Bấm một phong cách khác hoặc kéo thanh độ mạnh thì Bokin **thay** phong cách vừa áp, không chồng lên, nên thử nhiều kiểu thoải mái. Nếu đang có vùng chọn, chỉ vùng đó được chỉnh.
 
    **Màu theo ảnh mẫu** (miễn phí, giống *Match Color* của Photoshop): bấm **Chọn ảnh mẫu** (ảnh có tông màu bạn muốn), khoanh hoặc **🖌 Tô vùng** cần chỉnh (bỏ trống = cả ảnh), rồi bấm **Áp màu giống ảnh mẫu**. Bokin đưa độ sáng, độ tương phản và màu của vùng đó về giống ảnh mẫu (tính trong không gian màu Lab, ngay trong trình duyệt, không gọi AI), đặt kết quả thành layer **"Màu theo ảnh mẫu"** có mask đúng hình vùng chọn (giữ mép mềm), ảnh gốc vẫn ở dưới. Thanh **Độ mạnh** là độ mờ đục của layer; kéo thì Bokin áp lại, thay kết quả vừa rồi. **Giữ độ sáng của ảnh gốc** chỉ lấy màu (hợp khi ảnh mẫu tối hay sáng hơn hẳn, hoặc với da người). Khoanh sát vùng cần đổi: vật khác màu nằm trong vùng cũng bị đổi theo.
 
@@ -92,6 +92,7 @@ Trong lúc phát triển, dùng `npm run dev` để server tự khởi động l
 | `CLAUDE_FALLBACKS` | `default` | Khi một yêu cầu bị bộ lọc an toàn từ chối, API tự chạy lại trên model dự phòng. `off` để tắt. |
 | `PORT` / `HOST` | `3000` / `127.0.0.1` | Địa chỉ server. Giữ `127.0.0.1` nếu chưa có đăng nhập, vì server dùng API key của bạn. |
 | `HF_TOKEN` | (trống = tắt) | Token Hugging Face để bật chỉnh sửa bằng AI tạo ảnh |
+| `AI_EDIT` | (trống = bật nếu có `HF_TOKEN`) | `off`: tạm tắt Generative Fill (ẩn tab Tạo bằng AI, Claude không dùng AI tạo ảnh) |
 | `AI_EDIT_MODEL` | `Qwen/Qwen-Image-Edit-2511` | Mô hình chỉnh ảnh theo chỉ dẫn |
 | `AI_EDIT_PROVIDER` | `auto` | Nhà cung cấp chạy mô hình: `auto`, `fal-ai`, `wavespeed` |
 | `AI_EDIT_MAX_SIDE` | `1024` | Cạnh dài tối đa (px) của ảnh gửi cho AI. 1024 ≈ 0,03 USD, 1536 ≈ 0,07 USD mỗi ảnh (nét hơn khi sửa vùng lớn) |

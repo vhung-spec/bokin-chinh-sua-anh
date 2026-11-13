@@ -7,6 +7,8 @@ import { labStats, transferColors, describeStats } from './shared/color-transfer
 
 const MIME = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', psd: 'image/vnd.adobe.photoshop' };
 const MATCH_LAYER = 'Màu theo ảnh mẫu';
+// select_area đổi mép vùng chọn đang có (cần có vùng chọn: Photopea dừng script nếu không có).
+const EDGE_MODES = { soften: 'làm mềm mép', expand: 'nới rộng', contract: 'thu hẹp' };
 // Bật / tắt Quick Mask của Photopea (cùng một lệnh).
 const QUICK_MASK = `var __q = new ActionDescriptor(); var __qr = new ActionReference();
 __qr.putProperty(app.charIDToTypeID('Prpr'), app.charIDToTypeID('QucM')); __qr.putEnumerated(app.charIDToTypeID('Dcmn'), app.charIDToTypeID('Ordn'), app.charIDToTypeID('Trgt'));
@@ -120,6 +122,9 @@ app.echoToOE('painting');`);
     const problems = validate(input, tool.input_schema);
     if (problems.length) return fail(`Tham số không hợp lệ: ${problems.join('; ')}`);
     try {
+      if (name === 'select_area' && EDGE_MODES[input.mode] && !(await this._selectionBounds())) {
+        return fail(`Chưa có vùng chọn để ${EDGE_MODES[input.mode]}. Khoanh hoặc tô vùng trước.`);
+      }
       if (tool.kind === 'script') return await this._runScriptTool(tool, input);
       switch (name) {
         case 'view_image': return await this._viewImage(input);

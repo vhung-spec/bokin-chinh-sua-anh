@@ -102,7 +102,7 @@ test('HTTP: /api/health và /api/chat (client giả)', async () => {
 test('buildRequest: chỉ có ai_edit khi server bật AI, system prompt khớp', () => {
   const off = buildRequest(userMsg);
   assert.ok(!off.tools.some((t) => t.name === 'ai_edit'));
-  assert.match(off.system[0].text, /not enabled on this server/);
+  assert.match(off.system[0].text, /turned off in this tool/);
   const on = buildRequest(userMsg, { aiEdit: true });
   assert.ok(on.tools.some((t) => t.name === 'ai_edit'));
   assert.match(on.system[0].text, /use ai_edit/);
@@ -127,6 +127,24 @@ test('describeAiError: lỗi Hugging Face -> thông báo tiếng Việt', () => 
   const e401 = new InferenceClientProviderApiError('auth', req, { requestId: 'r', status: 401, body: '' });
   assert.match(describeAiError(e401).message, /HF_TOKEN/);
   assert.equal(describeAiError(new Error('x')).status, 500);
+});
+
+test('AI_EDIT=off tạm tắt Generative Fill dù có HF_TOKEN', async () => {
+  const saved = { token: process.env.HF_TOKEN, flag: process.env.AI_EDIT };
+  process.env.HF_TOKEN = 'hf_test';
+  process.env.AI_EDIT = 'off';
+  const app = createApp().listen(0, '127.0.0.1');
+  await new Promise((r) => app.once('listening', r));
+  try {
+    const h = await (await fetch(`http://127.0.0.1:${app.address().port}/api/health`)).json();
+    assert.equal(h.ai_edit.enabled, false);
+  } finally {
+    app.close();
+    for (const [k, v] of [['HF_TOKEN', saved.token], ['AI_EDIT', saved.flag]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });
 
 test('HTTP: /api/ai-edit tắt (501), sai body (400), chạy với editor giả (200)', async () => {

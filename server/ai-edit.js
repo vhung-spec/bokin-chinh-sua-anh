@@ -22,8 +22,9 @@ export const aiConfig = {
   maxSide: Math.min(2048, Math.max(256, Number(process.env.AI_EDIT_MAX_SIDE) || 1024)),
 };
 
+/** Bật khi có HF_TOKEN, trừ khi tạm tắt bằng AI_EDIT=off (công cụ chỉ còn chỉnh màu, chỉnh vùng). */
 export function aiEditEnabled() {
-  return Boolean(process.env.HF_TOKEN);
+  return Boolean(process.env.HF_TOKEN) && (process.env.AI_EDIT || '').toLowerCase() !== 'off';
 }
 
 let client;

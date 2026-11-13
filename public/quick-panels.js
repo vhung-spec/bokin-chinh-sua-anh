@@ -218,7 +218,7 @@ export function setupColorPanel({ runner, bridge, log, isBusy, addNote, openImag
   // ───────────── Màu theo ảnh mẫu ─────────────
   const m = {
     pick: $('match-pick'), file: $('match-file'), thumb: $('match-thumb'), name: $('match-name'), clear: $('match-clear'),
-    tools: $('match-tools'), selection: $('match-selection'), strength: $('match-strength'),
+    selection: $('match-selection'), strength: $('match-strength'),
     strengthValue: $('match-strength-value'), keep: $('match-keep'), run: $('match-run'),
   };
   const setMatchStatus = statusSetter($('match-status'), openImage);
@@ -239,17 +239,26 @@ export function setupColorPanel({ runner, bridge, log, isBusy, addNote, openImag
   }
   reference.on(showReference);
 
+  // Hàng "Vùng cần chỉnh" (đầu tab): dùng chung cho phong cách màu, màu theo ảnh mẫu và chỉnh nhanh.
+  const region = { tools: $('region-tools'), edge: $('region-edge'), info: $('region-info') };
   async function refreshMatch() {
     if (running) return;
     if (runner.painting) {
-      m.selection.textContent = PAINT_HINT;
+      region.info.textContent = PAINT_HINT;
+      region.info.className = 'fill-selection';
+      m.selection.textContent = 'Đang tô vùng…';
       m.selection.className = 'fill-selection';
+      for (const b of region.edge.querySelectorAll('button')) b.disabled = true;
       return;
     }
     const sel = await runner._selectionBounds().catch(() => null);
-    m.selection.textContent = sel
-      ? `Sẽ chỉnh vùng chọn ${Math.round(sel.width)}×${Math.round(sel.height)} px.`
-      : 'Chưa có vùng chọn: sẽ chỉnh cả ảnh.';
+    const size = sel && `${Math.round(sel.width)}×${Math.round(sel.height)} px`;
+    region.info.textContent = sel
+      ? `Đang chọn vùng ${size}: mọi chỉnh màu bên dưới chỉ áp cho vùng này.`
+      : 'Chưa có vùng chọn: chỉnh màu áp cho cả ảnh.';
+    region.info.className = `fill-selection ${sel ? 'ok' : ''}`;
+    for (const b of region.edge.querySelectorAll('button')) b.disabled = !sel;
+    m.selection.textContent = sel ? `Sẽ chỉnh vùng chọn ${size}.` : 'Chưa có vùng chọn: sẽ chỉnh cả ảnh.';
     m.selection.className = `fill-selection ${sel ? 'ok' : ''}`;
   }
 
@@ -296,8 +305,16 @@ export function setupColorPanel({ runner, bridge, log, isBusy, addNote, openImag
     reference.clear();
     setMatchStatus('');
   });
-  bindSelectTools(m.tools, m.selection, {
-    runner, bridge, isBusy: () => running || isBusy(), onChange: refreshMatch, setStatus: setMatchStatus,
+  bindSelectTools(region.tools, region.info, {
+    runner, bridge, isBusy: () => running || isBusy(), onChange: refreshMatch, setStatus,
+  });
+  region.edge.addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-edge]');
+    if (!b || running || isBusy()) return;
+    const out = await runner.execute('select_area', { mode: b.dataset.edge, amount: Number(b.dataset.amount) });
+    if (out.isError) setStatus(out.content, 'warn');
+    else setStatus(`Đã ${b.textContent.toLowerCase()} mép vùng chọn ${b.dataset.amount} px.`, 'ok');
+    await refreshMatch();
   });
   m.run.addEventListener('click', () => guarded(applyMatch));
   m.strength.addEventListener('input', () => {

@@ -34,19 +34,26 @@ test('chưa có ảnh: hiện thẻ Bắt đầu, khoá nút Tải/Hoàn tác; t
   assert.match(await page.textContent('#toast'), /Đã tạo ảnh trống 1200×630/);
 });
 
-test('ba tab: mỗi lúc một tab, nhớ tab đã chọn khi tải lại trang', async () => {
+test('tab: mỗi lúc một tab, nhớ tab đã chọn; chưa bật AI tạo ảnh thì không có tab Tạo bằng AI', async () => {
   assert.equal(await page.getAttribute('#tab-chat', 'aria-selected'), 'true', 'mặc định: Trò chuyện');
   assert.equal(await page.isVisible('#input'), true);
+  await page.waitForFunction(() => document.getElementById('tab-fill').hidden);
+  assert.equal(await page.isVisible('#start-tip-fill'), false, 'thẻ Bắt đầu không nhắc Tạo bằng AI');
   await page.click('#tab-color');
   assert.equal(await page.isVisible('#preset-grid'), true);
+  assert.equal(await page.isVisible('#region-tools'), true, 'hàng Vùng cần chỉnh ở đầu tab Màu nhanh');
   assert.equal(await page.isVisible('#input'), false);
-  await page.click('#tab-fill');
-  assert.equal(await page.isVisible('#select-tools'), true);
-  assert.equal(await page.isVisible('#preset-grid'), false);
 
+  // Tab đã nhớ là "fill" (từ lúc còn bật AI tạo ảnh) mà nay tắt: về tab Màu nhanh
+  await page.evaluate(() => localStorage.setItem('bokin.tab', 'fill'));
   await page.reload();
   await page.waitForFunction(() => window.bokin?.bridge?.isReady === true, null, { timeout: 120_000 });
-  assert.equal(await page.getAttribute('#tab-fill', 'aria-selected'), 'true', 'nhớ tab Tạo bằng AI');
+  await page.waitForFunction(() => document.getElementById('tab-color').getAttribute('aria-selected') === 'true');
+  assert.equal(await page.isVisible('#select-tools'), false);
+  await page.click('#tab-chat');
+  await page.reload();
+  await page.waitForFunction(() => window.bokin?.bridge?.isReady === true, null, { timeout: 120_000 });
+  assert.equal(await page.getAttribute('#tab-chat', 'aria-selected'), 'true', 'nhớ tab Trò chuyện');
   // Liên kết "Mô tả trong tab Trò chuyện" ở tab Màu nhanh
   await page.click('#tab-color');
   await page.click('#panel-color [data-goto="chat"]');

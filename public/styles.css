@@ -166,6 +166,16 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .quick-status.warn { color: var(--warn); }
 .quick-status .btn { margin-left: 6px; }
 
+/* ── Vùng cần chỉnh ── */
+.region-edge { display: flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.region-edge span { margin-right: 2px; }
+.region-edge button {
+  padding: 4px 8px; font-size: 12px; cursor: pointer; background: transparent; color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.region-edge button:hover:not(:disabled) { border-color: var(--accent); }
+.region-edge button:disabled { opacity: .45; cursor: default; }
+
 /* ── Màu theo ảnh mẫu ── */
 .match-card { padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--panel-2) 45%, transparent); }
 .match-ref { display: flex; align-items: center; gap: 10px; }

@@ -165,6 +165,10 @@ getJson('api/health')
     state.aiEnabled = Boolean(h.ai_edit?.enabled);
     if (h.ai_edit?.max_side) runner.aiMaxSide = h.ai_edit.max_side;
     fillPanel.setEnabled(state.aiEnabled, h.hints?.no_ai);
+    // Không có AI tạo ảnh (chưa cấu hình, hoặc quản trị viên tạm tắt Generative Fill): bỏ hẳn tab Tạo bằng AI.
+    $('tab-fill').hidden = !state.aiEnabled;
+    $('start-tip-fill').hidden = !state.aiEnabled;
+    if (!state.aiEnabled && $('tab-fill').getAttribute('aria-selected') === 'true') showTab('color');
     if (state.aiEnabled) {
       for (const text of ['Xoá vật thể trong vùng tôi vừa khoanh', 'Đổi nền thành bãi biển lúc hoàng hôn']) {
         const chip = make('button', '', text);
@@ -599,13 +603,14 @@ function resetConversation() {
 const TABS = ['chat', 'color', 'fill'];
 
 function showTab(name) {
-  if (!TABS.includes(name)) return;
+  if (!TABS.includes(name) || $(`tab-${name}`).hidden) return;
   for (const t of TABS) {
     $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
     $(`panel-${t}`).hidden = t !== name;
   }
   try { localStorage.setItem('bokin.tab', name); } catch { /* không bắt buộc */ }
   if (name === 'fill') fillPanel.refresh();
+  if (name === 'color') colorPanel.refresh();
 }
 
 for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
