@@ -32,7 +32,9 @@ const mock = http.createServer(async (req, res) => {
   const hasToolResult = Array.isArray(lastUser.content) && lastUser.content.some((b) => b.type === 'tool_result');
   const ids = new Set(body.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).map((b) => b.tool_use_id).filter(Boolean));
   let reply;
-  if (scenario === 'color') {
+  if (scenario === 'text') {
+    reply = { content: [{ type: 'text', text: `Trả lời ${requests.length}` }], stop_reason: 'end_turn' };
+  } else if (scenario === 'color') {
     reply = hasToolResult
       ? { content: [{ type: 'text', text: 'Đã cân bằng lại màu.' }], stop_reason: 'end_turn' }
       : { content: [{ type: 'tool_use', id: `tu_c${requests.length}`, name: 'adjust_color_balance', input: { midtones: [0, 0, 25] } }], stop_reason: 'tool_use' };
@@ -209,6 +211,39 @@ test('giữ cache ấm khi tạm dừng: gửi lại đúng yêu cầu trước 
   await page.waitForTimeout(1200);
   assert.equal(requests.slice(after).filter((r) => r.body.max_tokens === 0).length, 0);
   await page.evaluate(() => Object.assign(window.bokin.state, { keepAliveMs: 240_000, keepAliveMax: 5 }));
+  scenario = 'design';
+});
+
+test('không gửi lại ảnh nếu ảnh không đổi; gửi lại khi ảnh thay đổi (kể cả chỉnh tay)', async () => {
+  await page.click('#new-chat-btn');
+  scenario = 'text';
+  json(await tool(page, 'create_document', { width: 200, height: 120, background: '#406080' }));
+  const ask = async (text) => {
+    const n = requests.length;
+    await page.fill('#input', text);
+    await page.press('#input', 'Enter');
+    await page.waitForFunction(() => !window.bokin.state.busy);
+    return requests.slice(n).find((r) => r.body.max_tokens !== 0).body.messages.at(-1).content;
+  };
+  const hasImage = (content) => content.some((b) => b.type === 'image');
+
+  let c = await ask('Ảnh này thế nào?');
+  assert.ok(hasImage(c), 'lần đầu: gửi ảnh');
+  c = await ask('Còn gì nữa không?');
+  assert.ok(!hasImage(c), 'ảnh không đổi: không gửi lại');
+  assert.ok(c.some((b) => b.type === 'text' && /Ảnh không đổi/.test(b.text)));
+
+  json(await tool(page, 'adjust_brightness_contrast', { brightness: 40 })); // như người dùng tự chỉnh trong Photopea
+  c = await ask('Giờ thì sao?');
+  assert.ok(hasImage(c), 'ảnh đã đổi: gửi ảnh mới');
+
+  json(await tool(page, 'undo')); // hoàn tác cũng làm ảnh đổi (dù lịch sử không dài thêm)
+  c = await ask('Còn bây giờ?');
+  assert.ok(hasImage(c), 'sau hoàn tác: gửi ảnh mới');
+
+  await page.click('#new-chat-btn');
+  c = await ask('Cuộc trò chuyện mới');
+  assert.ok(hasImage(c), 'trò chuyện mới: Claude chưa thấy ảnh nên phải gửi');
   scenario = 'design';
 });
 

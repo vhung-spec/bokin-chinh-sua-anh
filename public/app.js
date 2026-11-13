@@ -51,6 +51,8 @@ const state = {
   keepAliveMs: 240_000,
   keepAliveMax: 5,
   keepAliveTimer: null,
+  /** dữ liệu ảnh xem trước gần nhất Claude đã thấy trong cuộc trò chuyện này (để không gửi lại ảnh trùng) */
+  lastPreviewData: null,
 };
 
 const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: 'vi' } } });
@@ -152,8 +154,19 @@ async function snapshotBlocks() {
     text: `(Trạng thái tự động lúc người dùng gửi tin nhắn; không cần gọi get_document_info hay view_image để xem lại.)\nThông tin ảnh: ${JSON.stringify(data)}`,
   }];
   const preview = await runner.execute('view_image', { max_size: PREVIEW_SIZE });
-  if (!preview.isError) blocks.push(...preview.content);
+  if (!preview.isError) blocks.push(...dedupePreview(preview, '(Ảnh không đổi so với ảnh xem trước gần nhất bạn đã thấy trong cuộc trò chuyện này.)'));
   return blocks;
+}
+
+/**
+ * Trả về các khối ảnh xem trước để gửi Claude, hoặc chỉ một dòng chữ nếu ảnh giống hệt ảnh Claude
+ * vừa thấy (so sánh chính dữ liệu ảnh, nên phát hiện được cả khi người dùng tự hoàn tác trong Photopea).
+ */
+function dedupePreview(preview, unchangedText) {
+  const image = preview.content.find((b) => b.type === 'image');
+  if (image && image.source.data === state.lastPreviewData) return [{ type: 'text', text: unchangedText }];
+  if (image) state.lastPreviewData = image.source.data;
+  return preview.content;
 }
 
 async function runLoop() {
@@ -251,6 +264,10 @@ async function agentLoop() {
       const step = renderStep(toolUse);
       const outcome = await runner.execute(toolUse.name, toolUse.input ?? {});
       finishStep(step, outcome);
+      const input = toolUse.input ?? {};
+      if (toolUse.name === 'view_image' && !outcome.isError && !input.region && (input.max_size ?? PREVIEW_SIZE) === PREVIEW_SIZE) {
+        state.lastPreviewData = outcome.content.find((b) => b.type === 'image')?.source.data ?? state.lastPreviewData;
+      }
       results.push({
         type: 'tool_result',
         tool_use_id: toolUse.id,
@@ -278,7 +295,10 @@ async function attachAfterPreview(toolUses, results) {
   if (preview.isError) return;
   const r = results[index];
   const base = typeof r.content === 'string' ? [{ type: 'text', text: r.content }] : r.content;
-  r.content = [...base, { type: 'text', text: 'Ảnh sau khi chỉnh (tự động):' }, ...preview.content];
+  const blocks = dedupePreview(preview, '(Ảnh sau khi chỉnh trông không khác ảnh trước đó.)');
+  r.content = blocks.some((b) => b.type === 'image')
+    ? [...base, { type: 'text', text: 'Ảnh sau khi chỉnh (tự động):' }, ...blocks]
+    : [...base, ...blocks];
 }
 
 async function callClaude() {
@@ -402,6 +422,7 @@ els.newChat.addEventListener('click', () => {
   state.messages = [];
   state.pendingNotes = [];
   state.lastRequest = null;
+  state.lastPreviewData = null;
   stopKeepAlive();
   els.chat.replaceChildren(els.empty);
   els.empty.hidden = false;
