@@ -17,18 +17,21 @@ const normalize = (s) => String(s).normalize('NFC').toLowerCase();
 export const SCENARIOS = [
   {
     id: 'lam-sang',
+    group: 'color',
     setup: 'photo',
     prompt: 'Ảnh này hơi tối, bạn làm sáng lên giúp mình nhé',
     check: (b, a) => (a.mean >= b.mean + 8 ? null : `độ sáng trung bình ${b.mean} -> ${a.mean} (cần tăng >= 8)`),
   },
   {
     id: 'den-trang',
+    group: 'color',
     setup: 'photo',
     prompt: 'Chuyển ảnh sang đen trắng',
     check: (b, a) => (a.saturation <= 8 ? null : `độ bão hoà còn ${a.saturation}`),
   },
   {
     id: 'cat-vuong',
+    group: 'basic',
     setup: 'photo',
     prompt: 'Cắt ảnh thành hình vuông, giữ quả bóng đỏ ở giữa khung hình',
     check: (b, a) => {
@@ -40,6 +43,7 @@ export const SCENARIOS = [
   },
   {
     id: 'them-chu',
+    group: 'basic',
     setup: 'photo',
     prompt: 'Thêm dòng chữ KHAI TRƯƠNG màu vàng, thật to ở phía trên ảnh',
     check: async (b, a, ctx) => {
@@ -57,6 +61,7 @@ export const SCENARIOS = [
   },
   {
     id: 'doi-mau-chu',
+    group: 'basic',
     setup: 'continue',
     prompt: 'Đổi chữ đó sang màu đỏ',
     check: async (b, a, ctx) => {
@@ -68,6 +73,7 @@ export const SCENARIOS = [
   },
   {
     id: 'hoan-tac',
+    group: 'basic',
     setup: 'continue',
     prompt: 'Thôi, hoàn tác lại bước vừa rồi',
     check: async (b, a, ctx) => {
@@ -79,12 +85,14 @@ export const SCENARIOS = [
   },
   {
     id: 'thu-nho',
+    group: 'basic',
     setup: 'photo',
     prompt: 'Thu nhỏ ảnh xuống chiều rộng 600px',
     check: (b, a) => (a.width === 600 && near(a.height, 400, 1) ? null : `kích thước ${a.width}x${a.height}`),
   },
   {
     id: 'vien-trang',
+    group: 'basic',
     setup: 'photo',
     prompt: 'Thêm viền trắng 30px xung quanh ảnh',
     check: (b, a) => {
@@ -94,6 +102,7 @@ export const SCENARIOS = [
   },
   {
     id: 'mo-nen',
+    group: 'basic',
     setup: 'photo',
     prompt: 'Làm mờ phần nền nhưng giữ quả bóng đỏ sắc nét',
     check: (b, a) => {
@@ -104,6 +113,7 @@ export const SCENARIOS = [
   },
   {
     id: 'bia-facebook',
+    group: 'basic',
     setup: 'empty',
     prompt: "Tạo ảnh bìa Facebook nền xanh đậm, có chữ 'Khai trương' màu trắng ở giữa",
     check: async (b, a, ctx) => {
@@ -119,6 +129,7 @@ export const SCENARIOS = [
   },
   {
     id: 'xoa-bong-ai',
+    group: 'fill',
     setup: 'photo',
     requires: 'ai_edit', // chỉ chạy khi server có HF_TOKEN
     prompt: 'Xoá quả bóng đỏ khỏi ảnh',
@@ -126,6 +137,7 @@ export const SCENARIOS = [
   },
   {
     id: 'can-bang-mau',
+    group: 'color',
     setup: 'photo_yellow',
     prompt: 'Ảnh bị ám vàng quá, cân bằng lại màu giúp mình',
     check: (b, a) => {
@@ -136,6 +148,7 @@ export const SCENARIOS = [
   },
   {
     id: 'troi-xanh-hon',
+    group: 'color',
     setup: 'photo',
     prompt: 'Làm bầu trời xanh đậm và tươi hơn, giữ nguyên màu bãi cỏ và quả bóng',
     check: (b, a) => {
@@ -147,6 +160,7 @@ export const SCENARIOS = [
   },
   {
     id: 'mau-dien-anh',
+    group: 'color',
     setup: 'photo',
     prompt: 'Chỉnh màu ảnh theo kiểu điện ảnh',
     check: (b, a) => {
@@ -156,6 +170,7 @@ export const SCENARIOS = [
   },
   {
     id: 'generative-fill',
+    group: 'fill',
     setup: 'photo',
     requires: 'ai_edit',
     // Giống người dùng tự khoanh quanh quả bóng trong Photopea rồi gõ lệnh
@@ -165,6 +180,7 @@ export const SCENARIOS = [
   },
   {
     id: 'tuong-phan-net',
+    group: 'color',
     setup: 'photo',
     prompt: 'Tăng tương phản rồi làm nét ảnh',
     check: (b, a) => {
@@ -173,3 +189,20 @@ export const SCENARIOS = [
     },
   },
 ];
+
+export const GROUPS = ['color', 'fill', 'basic'];
+
+/**
+ * Chọn tình huống theo bộ lọc: tên nhóm (color, fill, basic) hoặc một phần id.
+ * Tình huống 'continue' kéo theo các tình huống đứng trước nó trong cùng chuỗi.
+ */
+export function selectScenarios(filters = []) {
+  if (!filters.length) return SCENARIOS;
+  const picked = new Set();
+  SCENARIOS.forEach((s, i) => {
+    if (!filters.some((f) => (GROUPS.includes(f) ? s.group === f : s.id.includes(f)))) return;
+    picked.add(i);
+    for (let j = i; j > 0 && SCENARIOS[j].setup === 'continue'; j--) picked.add(j - 1);
+  });
+  return SCENARIOS.filter((_, i) => picked.has(i));
+}

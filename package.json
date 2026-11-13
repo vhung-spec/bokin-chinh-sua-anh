@@ -12,7 +12,8 @@
     "dev": "node --watch --env-file-if-exists=.env server/index.js",
     "test": "node --test \"test/unit/*.test.js\"",
     "test:e2e": "node --test --test-concurrency=1 \"test/e2e/*.test.js\"",
-    "eval": "node --env-file-if-exists=.env eval/run.js"
+    "eval": "node --env-file-if-exists=.env eval/run.js",
+    "eval:compare": "node --env-file-if-exists=.env eval/compare.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

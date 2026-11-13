@@ -23,6 +23,11 @@ Bokin là công cụ web giúp chỉnh sửa ảnh bằng câu lệnh tiếng Vi
 
 Claude **tự xem ảnh** (trước và sau khi sửa) để chọn vị trí đặt chữ, kiểm tra độ sáng, rồi tự hoàn tác nếu kết quả chưa ổn.
 
+Ngoài ô chat, bên phải còn có hai bảng thao tác nhanh **không cần gọi Claude**:
+
+- **Màu nhanh** (miễn phí): 8 phong cách màu với thanh độ mạnh, cùng các nút Tự cân màu, Ấm hơn, Lạnh hơn, Tươi hơn, Nhạt hơn, Hoàn tác. Bấm một phong cách khác hoặc kéo thanh độ mạnh thì Bokin **thay** phong cách vừa áp, không chồng lên, nên thử nhiều kiểu thoải mái. Nếu đang có vùng chọn, chỉ vùng đó được chỉnh.
+- **Generative Fill** (chỉ trả tiền ảnh AI): khoanh vùng trong Photopea, gõ yêu cầu tiếng Việt (để trống = xoá vật thể), chọn 1–3 phương án rồi bấm **Tạo**. Có nút chuyển qua lại giữa các phương án.
+
 ## Cài đặt và chạy
 
 Cần có **Node.js 22.9 trở lên** và một **API key Claude** (tạo tại [platform.claude.com](https://platform.claude.com)).
@@ -56,6 +61,7 @@ Trong lúc phát triển, dùng `npm run dev` để server tự khởi động l
 | `ANTHROPIC_API_KEY` | (bắt buộc) | API key Claude |
 | `CLAUDE_MODEL` | `claude-opus-5-5` | Model sử dụng. `claude-sonnet-5-5` rẻ hơn khoảng một nửa. |
 | `CLAUDE_EFFORT` | `medium` | Mức suy nghĩ: `low` nhanh/rẻ hơn, `high` cẩn thận hơn |
+| `CLAUDE_FAST_MODEL` | `claude-haiku-5-5` | Model rẻ dùng để dịch câu lệnh của bảng Generative Fill sang tiếng Anh |
 | `CLAUDE_FALLBACKS` | `default` | Khi một yêu cầu bị bộ lọc an toàn từ chối, API tự chạy lại trên model dự phòng. `off` để tắt. |
 | `PORT` / `HOST` | `3000` / `127.0.0.1` | Địa chỉ server. Giữ `127.0.0.1` nếu chưa có đăng nhập, vì server dùng API key của bạn. |
 | `HF_TOKEN` | (trống = tắt) | Token Hugging Face để bật chỉnh sửa bằng AI tạo ảnh |
@@ -174,23 +180,69 @@ npm run test:e2e
 
 ### Đánh giá với Claude API thật
 
-`npm run eval` chạy 16 câu lệnh tiếng Việt (làm sáng, đen trắng, cắt vuông giữ chủ thể, thêm chữ, đổi màu chữ, hoàn tác, thu nhỏ, thêm viền, làm mờ nền, tạo ảnh bìa, tăng tương phản, **cân bằng màu ảnh ám vàng, chỉ làm trời xanh hơn, chỉnh màu kiểu điện ảnh**, xoá vật thể bằng AI, **Generative Fill theo vùng đã khoanh**) qua **giao diện thật, Photopea thật và Claude API thật** trên một ảnh mẫu. Mỗi tình huống được chấm tự động bằng cách đo pixel và layer, rồi ghi số lượt gọi, token và chi phí ước tính vào `eval/out/<thời gian>/report.md`, kèm ảnh kết quả.
+`npm run eval` chạy tối đa 16 câu lệnh tiếng Việt (làm sáng, đen trắng, cắt vuông giữ chủ thể, thêm chữ, đổi màu chữ, hoàn tác, thu nhỏ, thêm viền, làm mờ nền, tạo ảnh bìa, tăng tương phản, **cân bằng màu ảnh ám vàng, chỉ làm trời xanh hơn, chỉnh màu kiểu điện ảnh**, xoá vật thể bằng AI, **Generative Fill theo vùng đã khoanh**) qua **giao diện thật, Photopea thật và Claude API thật** trên một ảnh mẫu. Mỗi tình huống được chấm tự động bằng cách đo pixel và layer, rồi ghi số lượt gọi, token và chi phí ước tính vào `eval/out/<thời gian>/report.md`, kèm ảnh kết quả.
 
 ```bash
 npm run eval
 ```
 
-Chạy một phần, ví dụ chỉ các tình huống có "chu" trong tên:
+Chạy một nhóm (`color` = chỉnh màu, `fill` = AI tạo ảnh, `basic` = còn lại), hoặc các tình huống có từ khoá trong tên:
 
 ```bash
-npm run eval -- chu
+npm run eval -- color
 ```
 
-Lưu ý: lệnh này **tốn tiền API thật**, ước tính 2–4 USD cho toàn bộ với `claude-opus-5-5`. Hai tình huống AI tạo ảnh chỉ chạy khi có `HF_TOKEN`.
+```bash
+npm run eval -- them-chu cat-vuong
+```
+
+Thử một cấu hình khác mà không cần sửa `.env`:
+
+```bash
+npm run eval -- color --model claude-sonnet-5-5 --effort low
+```
+
+Lưu ý: lệnh này **tốn tiền API thật**. Chi phí thực của từng tình huống được ghi trong báo cáo. Hai tình huống AI tạo ảnh chỉ chạy khi có `HF_TOKEN`.
+
+### Chọn model và mức suy nghĩ rẻ nhất mà vẫn đạt
+
+`npm run eval:compare` chạy cùng một nhóm tình huống (mặc định `color`) với nhiều cấu hình rồi in bảng so sánh: số tình huống đạt, chi phí, số lượt gọi và thời gian trung bình. Lệnh không có `--yes` chỉ in kế hoạch và chi phí ước tính, **không chạy**:
+
+```bash
+npm run eval:compare
+```
+
+Chạy thật với 3 cấu hình mặc định (`claude-opus-5-5` medium, `claude-opus-5-5` low, `claude-sonnet-5-5` low):
+
+```bash
+npm run eval:compare -- --yes
+```
+
+Tự chọn cấu hình:
+
+```bash
+npm run eval:compare -- color --configs claude-opus-5-5:low,claude-sonnet-5-5:medium --yes
+```
+
+Chọn cấu hình **rẻ nhất mà đạt bằng cấu hình tốt nhất**, rồi đặt `CLAUDE_MODEL` và `CLAUDE_EFFORT` trong `.env`. Theo hướng dẫn của Anthropic, nên thử model mạnh nhất ở mức suy nghĩ thấp trước khi chuyển sang model rẻ hơn.
 
 ## Chi phí và giới hạn
 
-- Mỗi lượt gửi lại toàn bộ lịch sử hội thoại, kể cả ảnh xem trước (khoảng 1–1,5 nghìn token mỗi ảnh). Prompt caching giúp giảm chi phí phần lặp lại. Khi chuyển sang ảnh khác hoặc việc khác, bấm **Trò chuyện mới** để cuộc trò chuyện gọn và rẻ.
+Các cách Bokin giảm chi phí:
+
+| Cách | Tiết kiệm |
+|---|---|
+| Bảng **Màu nhanh** chạy thẳng trong Photopea | Phong cách màu, cân màu, ấm/lạnh: **0 đồng** |
+| Bảng **Generative Fill**: dịch câu lệnh bằng Haiku 5.5 (để trống = xoá vật thể, không gọi Claude) | Bỏ vòng lặp Claude; gần như chỉ còn tiền ảnh AI (khoảng 0,03 USD/megapixel trên fal.ai) |
+| Mỗi tin nhắn tự kèm thông tin ảnh và ảnh xem trước | Claude không tốn 2 lượt gọi đầu chỉ để "nhìn" ảnh |
+| Kết quả chỉnh sửa tự kèm ảnh "sau khi chỉnh" | Không tốn thêm lượt gọi để kiểm tra |
+| Ảnh xem trước 768px | Ít token hơn khoảng 45% so với 1024px |
+| Cache cho phần cố định (31 tool + hướng dẫn, khoảng 9.000 token) | Các cuộc trò chuyện sau (trong vòng 5 phút kể từ lần gọi trước) chỉ tính giá đọc cache cho phần này (0,20 USD/triệu token với Opus 5.5 thay vì 5 USD ghi cache) |
+
+Nhờ vậy, một lần chỉnh màu đơn giản qua ô chat có thể chỉ cần **2 lượt gọi Claude** (lượt 1: đọc yêu cầu và chỉnh; lượt 2: xem ảnh kết quả và trả lời), thay vì khoảng 5 lượt như trước. Số lượt thực tế với Claude thật được ghi trong báo cáo của `npm run eval`. Mỗi lượt vẫn gửi lại lịch sử hội thoại, kể cả các ảnh xem trước. Khi chuyển sang ảnh khác hoặc việc khác, bấm **Trò chuyện mới** để cuộc trò chuyện gọn và rẻ.
+
+Giới hạn:
+
 - Hoàn tác/làm lại của Bokin dựa trên lịch sử Photopea. Nếu bạn tự bấm Ctrl+Z trong Photopea, lần hoàn tác tiếp theo của Bokin có thể lệch bước.
 - Chỉnh sửa bằng AI trên toàn ảnh lớn: ảnh được thu nhỏ tối đa 1536px trước khi gửi, nên kết quả kém nét hơn ảnh gốc. Với chỉnh sửa cục bộ, Claude chỉ gửi vùng cần sửa, nên phần còn lại giữ nguyên chất lượng.
 - Gộp layer vào layer `Background` bị khoá có thể thất bại; khi đó dùng "gộp tất cả" (flatten).

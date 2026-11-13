@@ -1,38 +1,43 @@
 // Đánh giá Bokin với Claude API THẬT: chạy từng câu lệnh tiếng Việt qua giao diện thật + Photopea thật,
 // kiểm tra kết quả tự động, ghi lại số lượt gọi, tool đã dùng, token và chi phí ước tính.
 //
-//   npm run eval                 # chạy tất cả tình huống (16 tình huống)
-//   npm run eval -- them-chu     # chỉ chạy tình huống có id chứa "them-chu"
+//   npm run eval                          # tất cả tình huống
+//   npm run eval -- color                 # một nhóm: color | fill | basic
+//   npm run eval -- them-chu cat-vuong    # tình huống có id chứa các từ này
+//   npm run eval -- color --model claude-sonnet-5-5 --effort low   # thử cấu hình khác
 //
-// LƯU Ý: tốn tiền API thật (khoảng 2–4 USD cho toàn bộ với claude-opus-5-5, chưa kể phí AI tạo ảnh).
-// Kết quả: eval/out/<thời gian>/report.md (+ ảnh kết quả của từng tình huống).
+// LƯU Ý: tốn tiền API thật. Xem chi phí thực của từng tình huống trong báo cáo.
+// Kết quả: eval/out/<thời gian>/report.md + results.json (+ ảnh kết quả của từng tình huống).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startServer, openApp } from '../test/e2e/helpers.js';
-import { SCENARIOS } from './scenarios.js';
+import { SCENARIOS, selectScenarios } from './scenarios.js';
 import { makeSamplePhoto, analyze } from './lib.js';
+import { PRICES } from './prices.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-// Giá USD / 1 triệu token: [input, output, đọc cache, ghi cache]
-const PRICES = {
-  'claude-opus-5-5': [4, 20, 0.2, 5],
-  'claude-sonnet-5-5': [2, 10, 0.1, 2.5],
-};
+const args = parseArgs(process.argv.slice(2));
+// Đặt cấu hình TRƯỚC khi nạp server (server đọc biến môi trường lúc khởi động).
+if (args.model) process.env.CLAUDE_MODEL = args.model;
+if (args.effort) process.env.CLAUDE_EFFORT = args.effort;
+const { startServer, openApp } = await import('../test/e2e/helpers.js');
+const { config } = await import('../server/chat.js');
 
-const filters = process.argv.slice(2);
-const scenarios = filters.length
-  ? SCENARIOS.filter((s, i) => filters.some((f) => s.id.includes(f)) || (s.setup === 'continue' && filters.some((f) => SCENARIOS[i - 1]?.id.includes(f))))
-  : SCENARIOS;
+const scenarios = selectScenarios(args.filters);
+if (!scenarios.length) {
+  console.error(`Không có tình huống nào khớp: ${args.filters.join(' ')}. Có: ${SCENARIOS.map((s) => s.id).join(', ')}`);
+  process.exit(1);
+}
 
 if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
   console.error('Thiếu ANTHROPIC_API_KEY (đặt trong .env).');
   process.exit(1);
 }
+console.log(`Cấu hình: ${config.model}, effort ${config.effort} · ${scenarios.length} tình huống`);
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-const outDir = path.join(here, 'out', stamp);
+const outDir = args.out ? path.resolve(args.out) : path.join(here, 'out', stamp);
 await fs.mkdir(outDir, { recursive: true });
 
 const { server, url } = await startServer();
@@ -93,7 +98,7 @@ try {
   server.close();
 }
 
-await fs.writeFile(path.join(outDir, 'results.json'), JSON.stringify(results, null, 2));
+await fs.writeFile(path.join(outDir, 'results.json'), JSON.stringify({ config: { model: config.model, effort: config.effort }, results }, null, 2));
 await fs.writeFile(path.join(outDir, 'report.md'), report(results));
 const passed = results.filter((r) => r.pass).length;
 const total = results.reduce((s, r) => s + r.usd, 0);
@@ -101,6 +106,16 @@ console.log(`\nĐạt ${passed}/${results.length}. Chi phí ước tính: $${tot
 process.exitCode = passed === results.length ? 0 : 1;
 
 // ───────────────────────────── Hàm phụ trợ ─────────────────────────────
+
+function parseArgs(argv) {
+  const out = { filters: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--model' || a === '--effort' || a === '--out') out[a.slice(2)] = argv[++i];
+    else out.filters.push(a);
+  }
+  return out;
+}
 
 async function resetChat(page, setup) {
   await page.click('#new-chat-btn');
@@ -158,7 +173,7 @@ function report(rows) {
   const lines = [
     `# Kết quả đánh giá Bokin (${stamp})`,
     '',
-    `Đạt **${passed}/${rows.length}** · chi phí ước tính **$${usd.toFixed(2)}** · model ${rows[0]?.usage[0]?.model ?? '?'}`,
+    `Đạt **${passed}/${rows.length}** · chi phí ước tính **$${usd.toFixed(2)}** · model ${config.model}, effort ${config.effort}`,
     '',
     '| Tình huống | Kết quả | Lượt | Thời gian | Chi phí | Ghi chú |',
     '|---|---|---|---|---|---|',

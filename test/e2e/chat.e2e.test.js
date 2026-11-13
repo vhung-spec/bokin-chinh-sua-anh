@@ -119,7 +119,11 @@ test('một yêu cầu chạy trọn vòng lặp tool và hiển thị câu tr�
   assert.equal(doc.width, 320);
   assert.equal(doc.layers[0].name, 'Lời chào');
 
-  if (process.env.E2E_SCREENSHOT) await page.screenshot({ path: process.env.E2E_SCREENSHOT, quality: 82 });
+  if (process.env.E2E_SCREENSHOT) {
+    await page.click('#color-panel summary'); // cho thấy bảng Màu nhanh trong ảnh chụp
+    await page.screenshot({ path: process.env.E2E_SCREENSHOT, quality: 82 });
+    await page.click('#color-panel summary');
+  }
 });
 
 test('lỗi API (sai key) hiển thị thông báo tiếng Việt và nút thử lại', async () => {
