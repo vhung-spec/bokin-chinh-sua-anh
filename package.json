@@ -1,0 +1,23 @@
+{
+  "name": "bokin-chinh-sua-anh",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chỉnh sửa ảnh bằng câu lệnh tiếng Việt: Claude điều khiển Photopea (trình chỉnh ảnh giống Photoshop) ngay trong trình duyệt.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "dev": "node --watch --env-file-if-exists=.env server/index.js",
+    "test": "node --test \"test/unit/*.test.js\"",
+    "test:e2e": "node --test --test-concurrency=1 \"test/e2e/*.test.js\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "express": "^5.3.0"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

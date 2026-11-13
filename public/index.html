@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bokin – Chỉnh sửa ảnh bằng câu lệnh</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234c8dff'/%3E%3Cpath d='M9 22l5-7 4 5 3-4 3 6z' fill='white'/%3E%3Ccircle cx='21' cy='11' r='2.5' fill='white'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <main class="editor">
+      <iframe id="photopea" title="Photopea" allow="clipboard-read; clipboard-write"></iframe>
+      <div class="editor-loading" id="editor-loading">Đang tải Photopea…</div>
+    </main>
+
+    <aside class="panel" aria-label="Trợ lý chỉnh ảnh">
+      <header class="panel-header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <div class="brand-name">Bokin</div>
+            <div class="brand-sub" id="status">Đang khởi động…</div>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn ghost" id="open-btn" title="Mở ảnh từ máy">Mở ảnh</button>
+          <div class="menu">
+            <button type="button" class="btn ghost" id="download-btn" aria-haspopup="true" aria-expanded="false">Tải ảnh</button>
+            <div class="menu-list" id="download-menu" hidden>
+              <button type="button" data-format="png">PNG</button>
+              <button type="button" data-format="jpg">JPG</button>
+              <button type="button" data-format="webp">WEBP</button>
+              <button type="button" data-format="psd">PSD (giữ layer)</button>
+            </div>
+          </div>
+          <button type="button" class="btn ghost" id="new-chat-btn" title="Bắt đầu cuộc trò chuyện mới">Trò chuyện mới</button>
+        </div>
+        <input type="file" id="file-input" accept="image/*,.psd,.xcf,.sketch,.fig,.ai,.pdf,.svg" hidden />
+      </header>
+
+      <div class="notice" id="notice" hidden></div>
+
+      <section class="chat" id="chat" aria-live="polite">
+        <div class="empty" id="empty">
+          <h2>Chỉnh ảnh bằng câu lệnh</h2>
+          <p>Mở một ảnh (hoặc kéo thả vào trang), rồi gõ yêu cầu bằng tiếng Việt. Bokin sẽ thao tác trực tiếp trong Photopea bên cạnh.</p>
+          <div class="suggestions" id="suggestions">
+            <button type="button">Làm ảnh sáng hơn và màu tươi hơn một chút</button>
+            <button type="button">Cắt ảnh thành hình vuông, giữ chủ thể ở giữa</button>
+            <button type="button">Chuyển sang ảnh đen trắng cổ điển</button>
+            <button type="button">Thêm chữ "GIẢM 50%" màu đỏ ở góc trên bên phải</button>
+            <button type="button">Tạo ảnh bìa Facebook 1200x630 nền xanh đậm với tiêu đề "Khai trương"</button>
+          </div>
+        </div>
+      </section>
+
+      <form class="composer" id="composer">
+        <textarea id="input" rows="2" placeholder="Ví dụ: tăng độ sáng 20%, làm nét ảnh, thêm viền trắng 40px…" aria-label="Yêu cầu chỉnh ảnh"></textarea>
+        <div class="composer-actions">
+          <span class="hint">Enter để gửi · Shift+Enter xuống dòng</span>
+          <button type="button" class="btn danger" id="stop-btn" hidden>Dừng</button>
+          <button type="submit" class="btn primary" id="send-btn">Gửi</button>
+        </div>
+      </form>
+    </aside>
+  </div>
+
+  <div class="drop-overlay" id="drop-overlay" hidden>Thả ảnh vào đây để mở trong Photopea</div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
