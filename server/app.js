@@ -30,6 +30,7 @@ export function createApp({ anthropic, aiEditor } = {}) {
       ok: true,
       model: config.model,
       effort: config.effort,
+      max_cost_per_request: config.maxCostPerRequest,
       has_api_key: Boolean(anthropic) || hasAnthropicCredentials(),
       ai_edit: { enabled: Boolean(editor), model: aiEditor ? 'custom' : aiConfig.model },
     });

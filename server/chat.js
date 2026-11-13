@@ -21,6 +21,8 @@ export const config = {
   maxTokens: 16000,
   // Model rẻ cho việc nhỏ (dịch câu lệnh Generative Fill sang tiếng Anh).
   fastModel: process.env.CLAUDE_FAST_MODEL || 'claude-haiku-5-5',
+  // Chi phí tối đa (USD, ước tính) cho một yêu cầu trước khi Bokin tạm dừng hỏi người dùng.
+  maxCostPerRequest: Number(process.env.CLAUDE_MAX_COST_PER_REQUEST) > 0 ? Number(process.env.CLAUDE_MAX_COST_PER_REQUEST) : 0.5,
 };
 
 // Hai bộ cấu hình cố định (có / không có ai_edit) để prompt caching không bị phá.

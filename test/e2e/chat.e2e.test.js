@@ -272,6 +272,32 @@ test('mở ảnh khác: tự bắt đầu cuộc trò chuyện mới, không g�
   scenario = 'design';
 });
 
+test('hiện chi phí từng yêu cầu và cả cuộc trò chuyện; vượt giới hạn thì tạm dừng hỏi tiếp tục', async () => {
+  scenario = 'color';
+  await page.click('#new-chat-btn');
+  json(await tool(page, 'create_document', { width: 120, height: 80, background: '#C8B060' }));
+  await page.fill('#input', 'Cân bằng màu');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.msg.meta');
+  assert.match(await page.textContent('.msg.meta'), /^2 lượt gọi · ~0,\d+ USD$/);
+  assert.match(await page.textContent('#cost-total'), /Cuộc trò chuyện này: ~0,\d+ USD/);
+
+  // Giới hạn rất nhỏ: dừng sau lượt đầu, bấm "Tiếp tục" thì làm nốt
+  await page.click('#new-chat-btn');
+  assert.equal(await page.textContent('#cost-total'), '', 'trò chuyện mới: tổng về 0');
+  await page.evaluate(() => { window.bokin.state.budget = 0.00001; });
+  const n = requests.length;
+  await page.fill('#input', 'Cân bằng màu lần nữa');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.msg.error >> text=Đã tạm dừng');
+  assert.equal(requests.slice(n).filter((r) => r.body.max_tokens !== 0).length, 1, 'chỉ 1 lượt rồi dừng');
+  await page.click('.msg.error button:has-text("Tiếp tục")');
+  await page.waitForSelector('.msg.assistant >> text=Đã cân bằng lại màu');
+  assert.equal(requests.slice(n).filter((r) => r.body.max_tokens !== 0).length, 2, 'tiếp tục đúng từ chỗ dừng');
+  await page.evaluate(() => { window.bokin.state.budget = 0.5; });
+  scenario = 'design';
+});
+
 test('không có lỗi JavaScript trên trang', () => {
   assert.deepEqual(pageErrors, [], pageErrors.join('\n'));
 });

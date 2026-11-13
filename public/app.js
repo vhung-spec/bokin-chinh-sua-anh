@@ -7,8 +7,9 @@ import { PhotopeaBridge } from './photopea-bridge.js';
 import { ToolRunner } from './tool-runner.js';
 import { toolLabel } from '/shared/tools.js';
 import { setupColorPanel, setupFillPanel } from './quick-panels.js';
+import { usageCost, totalCost, formatUsd } from '/shared/prices.js';
 
-const MAX_ROUNDS = 30; // số lượt gọi Claude tối đa cho một yêu cầu
+const MAX_ROUNDS = 15; // số lượt gọi Claude tối đa cho một yêu cầu
 const PREVIEW_SIZE = 768; // cạnh dài ảnh xem trước gửi cho Claude (đủ để đánh giá màu, ít token hơn 1024)
 // Các tool không làm thay đổi ảnh nhìn thấy được: không cần gắn ảnh "sau khi chỉnh".
 const NON_VISUAL_TOOLS = new Set(['get_document_info', 'view_image', 'export_image', 'select_area', 'select_by_color', 'create_document']);
@@ -53,6 +54,12 @@ const state = {
   keepAliveTimer: null,
   /** dữ liệu ảnh xem trước gần nhất Claude đã thấy trong cuộc trò chuyện này (để không gửi lại ảnh trùng) */
   lastPreviewData: null,
+  /** giới hạn chi phí ước tính cho một yêu cầu (USD; server gửi qua /api/health) */
+  budget: 0.5,
+  /** vị trí trong state.usage nơi yêu cầu hiện tại bắt đầu tính chi phí */
+  requestUsageStart: 0,
+  /** vị trí trong state.usage nơi cuộc trò chuyện hiện tại bắt đầu */
+  conversationUsageStart: 0,
 };
 
 const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: 'vi' } } });
@@ -85,6 +92,7 @@ fetch('/api/health')
     if (!h.has_api_key) {
       showNotice('Server chưa có ANTHROPIC_API_KEY. Tạo file .env (xem .env.example), điền key rồi khởi động lại server.');
     }
+    if (h.max_cost_per_request > 0) state.budget = h.max_cost_per_request;
     state.aiEnabled = Boolean(h.ai_edit?.enabled);
     fillPanel.setEnabled(state.aiEnabled);
     if (state.aiEnabled) {
@@ -140,6 +148,7 @@ async function send(text) {
   state.pendingNotes = [];
   content.push({ type: 'text', text });
   state.messages.push({ role: 'user', content });
+  state.requestUsageStart = state.usage.length;
   await runLoop();
 }
 
@@ -208,6 +217,7 @@ function scheduleKeepAlive(count = 0) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return;
       if (data.usage) state.usage.push({ model: data.model, kind: 'keepalive', ...data.usage });
+      updateCostTotal();
     } catch {
       return;
     }
@@ -225,6 +235,11 @@ async function agentLoop() {
   for (let round = 0; round < MAX_ROUNDS; round++) {
     if (state.stopRequested) {
       renderInfo('Đã dừng.');
+      return;
+    }
+    const spent = requestCost();
+    if (round > 0 && spent > state.budget) {
+      renderBudgetPause(spent);
       return;
     }
     const data = await callClaude();
@@ -247,6 +262,7 @@ async function agentLoop() {
     const toolUses = content.filter((b) => b.type === 'tool_use');
     if (toolUses.length === 0) {
       if (data.stop_reason === 'max_tokens') renderInfo('Câu trả lời bị cắt ngắn do quá dài.');
+      renderCostLine();
       return;
     }
 
@@ -280,6 +296,42 @@ async function agentLoop() {
     state.messages.push({ role: 'user', content: results });
   }
   renderInfo(`Đã chạy ${MAX_ROUNDS} lượt cho yêu cầu này. Gõ "tiếp tục" nếu muốn làm tiếp.`);
+  renderCostLine();
+}
+
+/** Chi phí ước tính của yêu cầu hiện tại (không tính giữ cache ấm). */
+function requestCost() {
+  return totalCost(state.usage.slice(state.requestUsageStart).filter((u) => u.kind !== 'keepalive'));
+}
+
+/** Dòng nhỏ dưới câu trả lời: số lượt gọi và chi phí của yêu cầu; cập nhật tổng của cuộc trò chuyện. */
+function renderCostLine() {
+  const calls = state.usage.slice(state.requestUsageStart).filter((u) => u.kind !== 'keepalive');
+  if (!calls.length) return;
+  const unknown = calls.some((u) => usageCost(u) === null);
+  append(make('div', 'msg meta', `${calls.length} lượt gọi · ${formatUsd(requestCost())}${unknown ? ' (chưa rõ giá model dự phòng)' : ''}`));
+  updateCostTotal();
+}
+
+function updateCostTotal() {
+  const used = state.usage.slice(state.conversationUsageStart);
+  $('cost-total').textContent = used.length ? `Cuộc trò chuyện này: ${formatUsd(totalCost(used))}` : '';
+}
+
+/** Vượt giới hạn chi phí của một yêu cầu: tạm dừng, để người dùng quyết định có làm tiếp không. */
+function renderBudgetPause(spent) {
+  const el = make('div', 'msg error', `Đã tạm dừng: yêu cầu này đã dùng ${formatUsd(spent)}, vượt giới hạn ${formatUsd(state.budget)} cho một yêu cầu.`);
+  const button = make('button', 'btn', 'Tiếp tục');
+  button.type = 'button';
+  button.addEventListener('click', () => {
+    el.remove();
+    if (state.busy) return;
+    state.requestUsageStart = state.usage.length; // bắt đầu một khoảng ngân sách mới
+    runLoop();
+  }, { once: true });
+  el.append(document.createElement('br'), button);
+  append(el);
+  renderCostLine();
 }
 
 /**
@@ -439,6 +491,9 @@ function resetConversation() {
   state.pendingNotes = [];
   state.lastRequest = null;
   state.lastPreviewData = null;
+  state.conversationUsageStart = state.usage.length;
+  state.requestUsageStart = state.usage.length;
+  updateCostTotal();
   stopKeepAlive();
   els.chat.replaceChildren(els.empty);
   els.empty.hidden = false;
