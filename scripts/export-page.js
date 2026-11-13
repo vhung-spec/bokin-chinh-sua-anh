@@ -5,7 +5,7 @@
 //
 // Ghi ra:
 //   <thư mục>/page/       giao diện (public/*) và shared/*.js, y như trang của npm start
-//   <thư mục>/claude.json yêu cầu gửi Claude dựng sẵn bởi server/chat.js (system prompt, 31 tool, cache, fallback),
+//   <thư mục>/claude.json yêu cầu gửi Claude dựng sẵn bởi server/chat.js (system prompt, các tool, cache, fallback),
 //                         câu lệnh Generative Fill, bảng giá, giá trị mặc định: máy chủ kia chỉ cần thêm `messages`
 //                         rồi gửi, nên prompt và tool chỉ có MỘT bản gốc là repo này.
 // Chạy lại mỗi khi sửa giao diện, tool hay prompt, rồi commit thư mục đích bên repo của web app kia.

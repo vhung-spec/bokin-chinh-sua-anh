@@ -6,7 +6,7 @@
 import { PhotopeaBridge } from './photopea-bridge.js';
 import { ToolRunner } from './tool-runner.js';
 import { toolLabel } from './shared/tools.js';
-import { setupColorPanel, setupFillPanel } from './quick-panels.js';
+import { setupColorPanel, setupFillPanel, syncPaintButtons } from './quick-panels.js';
 import { ActionLog } from './history.js';
 import { usageCost, totalCost, formatUsd } from './shared/prices.js';
 import { getJson, postJson } from './api.js';
@@ -56,6 +56,8 @@ const state = {
   keepAliveTimer: null,
   /** dữ liệu ảnh xem trước gần nhất Claude đã thấy trong cuộc trò chuyện này (để không gửi lại ảnh trùng) */
   lastPreviewData: null,
+  // Ảnh mẫu (runner.reference) đã gửi cho Claude trong cuộc trò chuyện này chưa (theo id).
+  referenceSentId: null,
   /** giới hạn chi phí ước tính cho một yêu cầu (USD; server gửi qua /api/health) */
   budget: 0.5,
   /** vị trí trong state.usage nơi yêu cầu hiện tại bắt đầu tính chi phí */
@@ -70,15 +72,47 @@ const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: '
 const runner = new ToolRunner(bridge, { onDownload: triggerDownload });
 
 /** Thêm ghi chú hệ thống cho tin nhắn tiếp theo; ghi chú cùng key thay thế ghi chú cũ. */
-function addNote(key, text) {
+function addNote(key, text, images = []) {
   state.pendingNotes = state.pendingNotes.filter((n) => n.key !== key);
-  state.pendingNotes.push({ key, text });
+  state.pendingNotes.push({ key, text, images });
+}
+
+// Ảnh mẫu để chỉnh màu giống (tab Màu nhanh và nút "🖼 Ảnh mẫu" của ô chat dùng chung một ảnh).
+const referenceListeners = [];
+const reference = {
+  async set(file) {
+    const ref = await runner.setReference(file, file.name || 'ảnh mẫu');
+    referenceListeners.forEach((fn) => fn(ref));
+    return ref;
+  },
+  clear() {
+    runner.clearReference();
+    referenceListeners.forEach((fn) => fn(null));
+    if (state.referenceSentId) {
+      addNote('reference', '(Ghi chú hệ thống: người dùng đã bỏ ảnh mẫu; không còn ảnh mẫu nào.)');
+      state.referenceSentId = null;
+    }
+  },
+  on(fn) {
+    referenceListeners.push(fn);
+  },
+};
+
+/** Lần đầu có ảnh mẫu trong cuộc trò chuyện: gửi kèm tin nhắn một ghi chú và ảnh mẫu thu nhỏ cho Claude. */
+function referenceBlocks() {
+  const ref = runner.reference;
+  if (!ref || state.referenceSentId === ref.id) return [];
+  state.referenceSentId = ref.id;
+  return [
+    { type: 'text', text: `(Ghi chú hệ thống: người dùng đã chọn ảnh mẫu "${ref.name}" (${ref.width}×${ref.height}) để lấy màu; ảnh thu nhỏ ở dưới. Muốn chỉnh màu vùng chọn hay cả ảnh giống ảnh mẫu thì dùng match_reference_colors.)` },
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: ref.thumb.slice(ref.thumb.indexOf(',') + 1) } },
+  ];
 }
 
 const log = new ActionLog(runner, bridge);
 const isBusy = () => state.busy || state.toolbarBusy;
 const openImage = () => els.fileInput.click();
-const colorPanel = setupColorPanel({ runner, log, isBusy, addNote, openImage });
+const colorPanel = setupColorPanel({ runner, bridge, log, isBusy, addNote, openImage, reference });
 const fillPanel = setupFillPanel({ runner, bridge, log, isBusy, addNote, openImage });
 
 // Sau mỗi tool: có chỉnh sửa mới thì không còn gì để "làm lại"; cập nhật thẻ Bắt đầu và vùng chọn.
@@ -94,7 +128,25 @@ runner.onExecuted = async (name, outcome) => {
 };
 
 // Cho phép kiểm thử tự động / gỡ lỗi từ console.
-window.bokin = { bridge, runner, state, log, showTab, executeTool: (name, input) => runner.execute(name, input) };
+// Tô vùng (Quick Mask): mọi nút "Tô vùng" cùng đổi; vùng chọn đổi nên không còn gì để "làm lại".
+runner.onPaintChange = (on) => {
+  syncPaintButtons(on);
+  log.clearRedo();
+  if (!on) scheduleRefresh();
+};
+
+// Ô chat: chip ảnh mẫu + nút đính kèm (cùng ô chọn tệp với tab Màu nhanh).
+reference.on((ref) => {
+  $('ref-chip').hidden = !ref;
+  if (ref) {
+    $('ref-chip-thumb').src = ref.thumb;
+    $('ref-chip-name').textContent = `Ảnh mẫu: ${ref.name}`;
+  }
+});
+$('ref-btn').addEventListener('click', () => $('match-file').click());
+$('ref-chip-clear').addEventListener('click', () => reference.clear());
+
+window.bokin = { bridge, runner, state, log, showTab, reference, executeTool: (name, input) => runner.execute(name, input) };
 
 // ───────────────────────────── Khởi động ─────────────────────────────
 setStatus('Đang tải Photopea…');
@@ -164,7 +216,11 @@ async function send(text) {
   renderUser(text);
   // Gửi kèm trạng thái hiện tại (thông tin ảnh + ảnh xem trước) để Claude không phải tốn 2 lượt gọi đầu tiên.
   const snapshot = await snapshotBlocks().catch(() => []);
-  const content = [...snapshot, ...state.pendingNotes.map((note) => ({ type: 'text', text: note.text }))];
+  const content = [
+    ...snapshot,
+    ...state.pendingNotes.flatMap((note) => [{ type: 'text', text: note.text }, ...(note.images ?? [])]),
+    ...referenceBlocks(),
+  ];
   state.pendingNotes = [];
   content.push({ type: 'text', text });
   state.messages.push({ role: 'user', content });
@@ -530,6 +586,7 @@ function resetConversation() {
   state.pendingNotes = [];
   state.lastRequest = null;
   state.lastPreviewData = null;
+  state.referenceSentId = null;
   state.conversationUsageStart = state.usage.length;
   state.requestUsageStart = state.usage.length;
   updateCostTotal();
@@ -654,6 +711,7 @@ async function refreshUi() {
   $('start-card').hidden = hasDoc;
   for (const id of ['undo-btn', 'redo-btn', 'compare-btn', 'download-btn']) $(id).disabled = !hasDoc;
   fillPanel.refresh();
+  colorPanel.refresh();
 }
 
 let refreshTimer = null;

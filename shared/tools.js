@@ -557,6 +557,31 @@ __ok({ layer: layer.name, preset: ${lit(preset)}, strength: ${num(strength)}, hi
     },
   },
   {
+    name: 'match_reference_colors',
+    label: 'Chỉnh màu theo ảnh mẫu',
+    kind: 'client',
+    description:
+      'Recolor the user\'s selection (or the whole image) so its colors and tones match the REFERENCE IMAGE the user ' +
+      'picked in Bokin ("ảnh mẫu") — like Photoshop Match Color. Runs in the browser: free and fast. It moves the ' +
+      'average lightness, contrast and color (CIELAB) of the target area to the reference\'s and puts the result on a new ' +
+      'layer "Màu theo ảnh mẫu" masked to the selection (soft edges kept); the original stays underneath. ' +
+      'get_document_info / the snapshot shows reference_image when one is loaded (with its colors); if there is none, ' +
+      'ask the user to pick one with the "Ảnh mẫu" button. strength 10-100 (default 100) is the layer opacity. ' +
+      'keep_brightness=true takes only the colors and keeps the original lightness (when the reference is much darker or ' +
+      'brighter but the user wants its tint, and for skin). use_selection (default true): the user\'s selection if any, ' +
+      'else the whole image. To retry with other settings, first delete the previous "Màu theo ảnh mẫu" layer ' +
+      '(manage_layer). Check the automatic preview; fine-tune inside the same selection with the color tools if needed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        strength: { type: 'number', minimum: 10, maximum: 100, description: 'Độ mạnh (độ mờ đục của layer kết quả), mặc định 100.' },
+        keep_brightness: { type: 'boolean', description: 'Giữ độ sáng của ảnh gốc, chỉ lấy màu của ảnh mẫu.' },
+        use_selection: { type: 'boolean', description: 'Chỉ chỉnh vùng chọn hiện tại (mặc định true; không có vùng chọn thì cả ảnh).' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'apply_filter',
     label: 'Áp bộ lọc',
     kind: 'script',

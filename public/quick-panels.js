@@ -1,5 +1,6 @@
 // Hai tab thao tác nhanh, chạy thẳng trong Photopea mà KHÔNG chạy vòng lặp Claude:
-//   - Màu nhanh: preset màu + độ mạnh, tự cân màu, ấm/lạnh hơn, tươi/nhạt hơn (miễn phí).
+//   - Màu nhanh: preset màu + độ mạnh, màu theo ảnh mẫu (Match Color) cho vùng khoanh / tô,
+//     tự cân màu, ấm/lạnh hơn, tươi/nhạt hơn (miễn phí).
 //   - Tạo bằng AI (Generative Fill): khoanh vùng -> mô tả -> Tạo (chỉ trả tiền ảnh AI).
 // Mọi thao tác được ghi vào ActionLog để nút Hoàn tác chung gỡ được cả cụm.
 import { COLOR_PRESETS } from './shared/color.js';
@@ -36,6 +37,49 @@ const SELECT_HINTS = {
 
 const AM = "var _c = function (k) { return app.charIDToTypeID(k); }; var _s = function (k) { return app.stringIDToTypeID(k); };";
 
+const PAINT_HINT = 'Tô màu đen lên vùng cần chỉnh trong Photopea (hiện màu đỏ); phím X đổi sang màu trắng để xoá bớt, phím [ ] đổi cỡ cọ. Tô xong bấm "✓ Xong tô".';
+
+/** Nút "Tô vùng" ở mọi tab cùng hiện trạng thái tô (runner.onPaintChange gọi hàm này). */
+export function syncPaintButtons(on) {
+  for (const b of document.querySelectorAll('button[data-paint]')) {
+    b.classList.toggle('active', on);
+    b.textContent = on ? '✓ Xong tô' : '🖌 Tô vùng';
+  }
+}
+
+/**
+ * Hàng nút khoanh vùng: data-tool = đổi công cụ chọn của Photopea, data-select = select_area (invert, none),
+ * data-paint = Tô vùng (Quick Mask: tô bằng cọ, bấm lần nữa là xong).
+ */
+function bindSelectTools(container, info, { runner, bridge, isBusy, onChange, setStatus }) {
+  container.addEventListener('click', async (e) => {
+    const button = e.target.closest('button');
+    if (!button || isBusy()) return;
+    if (button.hasAttribute('data-paint')) {
+      const out = runner.painting ? await runner.finishPaint() : await runner.startPaint();
+      if (out.isError) setStatus(out.content, /Chưa tô/.test(out.content) ? 'warn' : 'error');
+      if (runner.painting) {
+        info.textContent = PAINT_HINT;
+        info.className = 'fill-selection';
+        return;
+      }
+      await onChange();
+      return;
+    }
+    if (runner.painting) await runner.finishPaint();
+    if (button.dataset.tool) {
+      const r = await bridge.exec(`${AM} var d = new ActionDescriptor(); var r = new ActionReference(); r.putClass(_s(${JSON.stringify(button.dataset.tool)})); d.putReference(_c('null'), r); app.executeAction(_c('slct'), d, DialogModes.NO);`);
+      for (const b of container.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b === button);
+      info.textContent = r.completed ? SELECT_HINTS[button.dataset.tool] : 'Không đổi được công cụ; hãy chọn công cụ trực tiếp trong Photopea.';
+      info.className = 'fill-selection';
+      return;
+    }
+    const out = await runner.execute('select_area', { mode: button.dataset.select });
+    if (out.isError) setStatus(out.content, 'error');
+    await onChange();
+  });
+}
+
 /** Dòng trạng thái của một tab; lỗi "chưa có ảnh" kèm nút Mở ảnh. */
 function statusSetter(el, openImage) {
   return (text, kind = '') => {
@@ -55,12 +99,15 @@ function statusSetter(el, openImage) {
 /**
  * @param {object} deps
  * @param {import('./tool-runner.js').ToolRunner} deps.runner
+ * @param {import('./photopea-bridge.js').PhotopeaBridge} deps.bridge
  * @param {import('./history.js').ActionLog} deps.log
  * @param {() => boolean} deps.isBusy - đang có thao tác khác (ô chat, hoàn tác...)
  * @param {(key: string, text: string) => void} deps.addNote - ghi chú gửi kèm tin nhắn tiếp theo cho Claude
  * @param {() => void} deps.openImage
+ * @param {{ set: (file: File) => Promise<object>, clear: () => void, on: (fn: (ref: object|null) => void) => void }} deps.reference
+ *   - ảnh mẫu dùng chung với ô chat
  */
-export function setupColorPanel({ runner, log, isBusy, addNote, openImage }) {
+export function setupColorPanel({ runner, bridge, log, isBusy, addNote, openImage, reference }) {
   const $ = (id) => document.getElementById(id);
   const grid = $('preset-grid');
   const strength = $('preset-strength');
@@ -107,6 +154,7 @@ export function setupColorPanel({ runner, log, isBusy, addNote, openImage }) {
     } finally {
       running = false;
       buttons.forEach((b) => { b.disabled = false; });
+      updateMatchRun();
     }
   }
 
@@ -167,11 +215,114 @@ export function setupColorPanel({ runner, log, isBusy, addNote, openImage }) {
     if (active) guarded(() => applyPreset(active));
   });
 
+  // ───────────── Màu theo ảnh mẫu ─────────────
+  const m = {
+    pick: $('match-pick'), file: $('match-file'), thumb: $('match-thumb'), name: $('match-name'), clear: $('match-clear'),
+    tools: $('match-tools'), selection: $('match-selection'), strength: $('match-strength'),
+    strengthValue: $('match-strength-value'), keep: $('match-keep'), run: $('match-run'),
+  };
+  const setMatchStatus = statusSetter($('match-status'), openImage);
+  buttons.push(m.run);
+  function updateMatchRun() {
+    m.run.disabled = running || !runner.reference;
+    m.run.title = runner.reference ? '' : 'Chọn ảnh mẫu trước';
+  }
+
+  function showReference(ref) {
+    m.thumb.hidden = !ref;
+    if (ref) m.thumb.src = ref.thumb;
+    else m.thumb.removeAttribute('src');
+    m.name.textContent = ref ? `${ref.name} · ${ref.width}×${ref.height}` : 'Chưa có ảnh mẫu';
+    m.clear.hidden = !ref;
+    m.pick.textContent = ref ? 'Đổi ảnh mẫu' : 'Chọn ảnh mẫu';
+    updateMatchRun();
+  }
+  reference.on(showReference);
+
+  async function refreshMatch() {
+    if (running) return;
+    if (runner.painting) {
+      m.selection.textContent = PAINT_HINT;
+      m.selection.className = 'fill-selection';
+      return;
+    }
+    const sel = await runner._selectionBounds().catch(() => null);
+    m.selection.textContent = sel
+      ? `Sẽ chỉnh vùng chọn ${Math.round(sel.width)}×${Math.round(sel.height)} px.`
+      : 'Chưa có vùng chọn: sẽ chỉnh cả ảnh.';
+    m.selection.className = `fill-selection ${sel ? 'ok' : ''}`;
+  }
+
+  async function applyMatch() {
+    const ref = runner.reference;
+    if (!ref) {
+      setMatchStatus('Chọn ảnh mẫu trước.', 'warn');
+      return;
+    }
+    if (runner.painting) await runner.finishPaint();
+    const value = Number(m.strength.value);
+    const keep = m.keep.checked;
+    // Lần áp trước vẫn là thao tác mới nhất (chưa khoanh vùng khác, chưa chỉnh gì thêm): thay chứ không chồng lên.
+    const top = log.top();
+    if (top?.kind === 'match' && (await log.isCurrent(top))) await log.undo();
+    const sel = await runner._selectionBounds();
+    const scope = sel ? `vùng chọn ${Math.round(sel.width)}×${Math.round(sel.height)} px` : 'cả ảnh';
+    setMatchStatus('Đang tính màu…');
+    const out = await log.record({ kind: 'match', label: `màu theo ảnh mẫu "${ref.name}"` },
+      () => runner.execute('match_reference_colors', { strength: value, keep_brightness: keep, use_selection: true }));
+    if (out.isError) {
+      setMatchStatus(out.content, 'error');
+      return;
+    }
+    markActive(null);
+    setMatchStatus(`Đã áp màu của "${ref.name}" cho ${scope} (độ mạnh ${value}%${keep ? ', giữ độ sáng' : ''}). Kéo độ mạnh để thử lại; không ưng thì bấm Hoàn tác.`, 'ok');
+    addNote('match', `(Ghi chú hệ thống: người dùng đã tự áp màu theo ảnh mẫu "${ref.name}" cho ${scope}, độ mạnh ${value}%${keep ? ', giữ độ sáng' : ''} bằng bảng Màu nhanh; kết quả ở layer "Màu theo ảnh mẫu".)`);
+    await refreshMatch();
+  }
+
+  m.pick.addEventListener('click', () => m.file.click());
+  m.file.addEventListener('change', async () => {
+    const file = m.file.files?.[0];
+    m.file.value = '';
+    if (!file) return;
+    try {
+      const ref = await reference.set(file);
+      setMatchStatus(`Đã chọn ảnh mẫu "${ref.name}". Khoanh hoặc tô vùng cần chỉnh rồi bấm "Áp màu giống ảnh mẫu".`, 'ok');
+    } catch (error) {
+      setMatchStatus(error?.message ?? String(error), 'error');
+    }
+  });
+  m.clear.addEventListener('click', () => {
+    reference.clear();
+    setMatchStatus('');
+  });
+  bindSelectTools(m.tools, m.selection, {
+    runner, bridge, isBusy: () => running || isBusy(), onChange: refreshMatch, setStatus: setMatchStatus,
+  });
+  m.run.addEventListener('click', () => guarded(applyMatch));
+  m.strength.addEventListener('input', () => {
+    m.strengthValue.textContent = `${m.strength.value}%`;
+  });
+  // Đổi độ mạnh / giữ độ sáng ngay sau khi áp: áp lại (thay kết quả vừa rồi).
+  const reapply = async () => {
+    const top = log.top();
+    if (top?.kind === 'match' && (await log.isCurrent(top))) guarded(applyMatch);
+  };
+  m.strength.addEventListener('change', reapply);
+  m.keep.addEventListener('change', reapply);
+  showReference(runner.reference);
+
   return {
     /** Bỏ đánh dấu preset (khi hoàn tác, mở ảnh khác...). */
     reset() {
       markActive(null);
       setStatus('');
+      setMatchStatus('');
+    },
+    /** Cập nhật dòng vùng chọn của thẻ Màu theo ảnh mẫu. */
+    refresh() {
+      if (!document.getElementById('panel-color').hidden && !isBusy()) return refreshMatch();
+      return null;
     },
   };
 }
@@ -203,6 +354,13 @@ export function setupFillPanel({ runner, bridge, log, isBusy, addNote, openImage
 
   async function refreshSelection() {
     if (running) return;
+    if (runner.painting) {
+      hasSelection = false;
+      selectionInfo.textContent = PAINT_HINT;
+      selectionInfo.className = 'fill-selection';
+      updateRunButton();
+      return;
+    }
     const sel = await runner._selectionBounds().catch(() => null);
     hasSelection = Boolean(sel);
     selectionInfo.textContent = sel
@@ -212,19 +370,8 @@ export function setupFillPanel({ runner, bridge, log, isBusy, addNote, openImage
     updateRunButton();
   }
 
-  tools.addEventListener('click', async (e) => {
-    const button = e.target.closest('button');
-    if (!button || running || isBusy()) return;
-    if (button.dataset.tool) {
-      const r = await bridge.exec(`${AM} var d = new ActionDescriptor(); var r = new ActionReference(); r.putClass(_s(${JSON.stringify(button.dataset.tool)})); d.putReference(_c('null'), r); app.executeAction(_c('slct'), d, DialogModes.NO);`);
-      for (const b of tools.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b === button);
-      selectionInfo.textContent = r.completed ? SELECT_HINTS[button.dataset.tool] : 'Không đổi được công cụ; hãy chọn công cụ trực tiếp trong Photopea.';
-      selectionInfo.className = 'fill-selection';
-      return;
-    }
-    const out = await runner.execute('select_area', { mode: button.dataset.select });
-    if (out.isError) setStatus(out.content, 'error');
-    await refreshSelection();
+  bindSelectTools(tools, selectionInfo, {
+    runner, bridge, isBusy: () => running || isBusy(), onChange: refreshSelection, setStatus,
   });
 
   function showVariants(layers) {

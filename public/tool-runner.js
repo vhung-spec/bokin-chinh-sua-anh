@@ -3,8 +3,14 @@ import { TOOL_MAP } from './shared/tools.js';
 import { validate } from './shared/validate.js';
 import { RESULT_PREFIX, wrap, rectPoints, findUnsupportedSyntax } from './shared/script-kit.js';
 import { postJson } from './api.js';
+import { labStats, transferColors, describeStats } from './shared/color-transfer.js';
 
 const MIME = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', psd: 'image/vnd.adobe.photoshop' };
+const MATCH_LAYER = 'Màu theo ảnh mẫu';
+// Bật / tắt Quick Mask của Photopea (cùng một lệnh).
+const QUICK_MASK = `var __q = new ActionDescriptor(); var __qr = new ActionReference();
+__qr.putProperty(app.charIDToTypeID('Prpr'), app.charIDToTypeID('QucM')); __qr.putEnumerated(app.charIDToTypeID('Dcmn'), app.charIDToTypeID('Ordn'), app.charIDToTypeID('Trgt'));
+__q.putReference(app.charIDToTypeID('null'), __qr); app.executeAction(app.charIDToTypeID('setd'), __q, DialogModes.NO);`;
 
 /**
  * Kết quả của một lần chạy tool.
@@ -20,6 +26,77 @@ export class ToolRunner {
     this.undoDepth = 0;
     // Cạnh dài tối đa của ảnh gửi cho AI tạo ảnh (server gửi qua /api/health).
     this.aiMaxSide = 1024;
+    // Ảnh mẫu để lấy màu (setReference): { id, name, stats, colors, thumb, width, height } hoặc null.
+    this.reference = null;
+    // Đang "tô vùng" (Quick Mask của Photopea) bằng nút của Bokin; onPaintChange(on) báo cho giao diện.
+    this.painting = false;
+  }
+
+  /** Đặt ảnh mẫu (File/Blob ảnh): tính thống kê màu trên bản thu nhỏ, giữ ảnh nhỏ để hiện và gửi Claude. */
+  async setReference(blob, name = 'ảnh mẫu') {
+    const bmp = await createImageBitmap(blob).catch(() => null);
+    if (!bmp) throw new Error('Không đọc được ảnh mẫu (chỉ nhận JPG, PNG, WEBP).');
+    const draw = (side) => {
+      const scale = Math.min(1, side / Math.max(bmp.width, bmp.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(bmp.width * scale));
+      c.height = Math.max(1, Math.round(bmp.height * scale));
+      const x = c.getContext('2d', { willReadFrequently: true });
+      x.imageSmoothingQuality = 'high';
+      x.drawImage(bmp, 0, 0, c.width, c.height);
+      return { c, x };
+    };
+    const big = draw(512);
+    const stats = labStats(big.x.getImageData(0, 0, big.c.width, big.c.height).data);
+    const small = draw(256);
+    const width = bmp.width, height = bmp.height;
+    bmp.close();
+    if (!stats) throw new Error('Ảnh mẫu trong suốt hoàn toàn, không có màu để lấy.');
+    this.reference = {
+      id: Date.now(), name: String(name).slice(0, 80), stats, colors: describeStats(stats),
+      thumb: small.c.toDataURL('image/jpeg', 0.85), width, height,
+    };
+    return this.reference;
+  }
+
+  clearReference() {
+    this.reference = null;
+  }
+
+  /** Bắt đầu tô vùng: vùng chọn đang có hiện màu đỏ, tô thêm bằng cọ (đen = thêm, trắng = bớt). */
+  async startPaint() {
+    if (this.painting) return ok('Đang tô vùng.');
+    if (!(await this._hasDocument())) return fail('Chưa có ảnh nào đang mở.');
+    // Trong Quick Mask, màu đỏ là phần KHÔNG được chọn khi thoát ra: đảo vùng chọn trước để phần đang chọn hiện đỏ,
+    // và khi tô xong thì đảo lại (finishPaint): phần tô đỏ chính là vùng chọn.
+    if (await this._selectionBounds()) await this.bridge.exec('app.activeDocument.selection.invert();');
+    const r = await this.bridge.exec(`${QUICK_MASK}
+var __d = new ActionDescriptor(); var __r = new ActionReference(); __r.putClass(app.stringIDToTypeID('paintbrushTool'));
+__d.putReference(app.charIDToTypeID('null'), __r); app.executeAction(app.charIDToTypeID('slct'), __d, DialogModes.NO);
+app.echoToOE('painting');`);
+    if (!r.completed) return fail('Photopea không vào được chế độ tô vùng.');
+    this.painting = true;
+    this.undoDepth = 0;
+    this.onPaintChange?.(true);
+    return ok('Đang tô vùng: tô màu đen lên chỗ cần chỉnh (hiện màu đỏ), phím X đổi sang trắng để xoá bớt.');
+  }
+
+  /** Tô xong: thoát Quick Mask, vùng vừa tô thành vùng chọn. */
+  async finishPaint() {
+    if (!this.painting) return ok('Không ở chế độ tô vùng.');
+    this.painting = false;
+    this.onPaintChange?.(false);
+    const r = await this.bridge.exec(`${QUICK_MASK}\napp.echoToOE('done');`);
+    if (!r.completed) return fail('Photopea không thoát được chế độ tô vùng; bấm phím Q trong Photopea.');
+    await this.bridge.exec('app.activeDocument.selection.invert();');
+    this.undoDepth = 0;
+    const sel = await this._selectionBounds();
+    return sel ? ok(JSON.stringify({ selection: sel })) : fail('Chưa tô vùng nào.');
+  }
+
+  async _hasDocument() {
+    const r = await this.bridge.exec("app.echoToOE('__N__' + app.documents.length);");
+    return Number((r.echoes.find((e) => e.startsWith('__N__')) ?? '__N__0').slice(5)) > 0;
   }
 
   /**
@@ -38,6 +115,8 @@ export class ToolRunner {
   async _execute(name, input = {}) {
     const tool = TOOL_MAP.get(name);
     if (!tool) return fail(`Không có công cụ tên "${name}".`);
+    // Đang tô vùng bằng nút của Bokin: kết thúc trước, để lệnh chạy trên vùng chọn chứ không trên lớp mặt nạ tô.
+    if (this.painting && name !== 'get_document_info') await this.finishPaint();
     const problems = validate(input, tool.input_schema);
     if (problems.length) return fail(`Tham số không hợp lệ: ${problems.join('; ')}`);
     try {
@@ -50,6 +129,7 @@ export class ToolRunner {
         case 'run_script': return await this._runRawScript(input.script);
         case 'ai_edit': return await this._aiEdit(input);
         case 'select_by_color': return await this._selectByColor(input);
+        case 'match_reference_colors': return await this._matchReference(input);
         default: return fail(`Công cụ "${name}" chưa được cài đặt.`);
       }
     } catch (error) {
@@ -64,7 +144,9 @@ export class ToolRunner {
     if (!result.isError && tool.name === 'get_document_info') {
       const data = JSON.parse(result.content);
       if (data.has_document) {
-        data.selection = await this._selectionBounds();
+        data.selection = this.painting ? null : await this._selectionBounds();
+        if (this.painting) data.painting_selection = true;
+        if (this.reference) data.reference_image = { name: this.reference.name, colors: this.reference.colors };
         result = ok(JSON.stringify(data));
       }
     }
@@ -394,11 +476,94 @@ __ok({});`));
   }
 
   /**
+   * Chỉnh màu vùng chọn (hoặc cả ảnh) theo ảnh mẫu (setReference): tính trong trình duyệt (Lab, giống Match Color),
+   * đặt kết quả thành layer mới có mask đúng hình vùng chọn; độ mạnh = độ mờ đục của layer.
+   */
+  async _matchReference({ strength = 100, keep_brightness: keepBrightness = false, use_selection: useSelection = true } = {}) {
+    const ref = this.reference;
+    if (!ref) return fail('Chưa có ảnh mẫu. Nhờ người dùng chọn ảnh mẫu (nút "Ảnh mẫu" trong tab Màu nhanh hoặc cạnh ô chat).');
+    let saved = null;
+    if (useSelection && (await this._selectionBounds())) {
+      saved = await this._saveSelection();
+      if (saved.isError) return saved;
+    }
+    try {
+      const exported = await this.bridge.exportDocument('png');
+      if (!exported) return fail('Chưa có ảnh nào đang mở.');
+      const bitmap = await createImageBitmap(new Blob([exported.buffer], { type: 'image/png' }));
+      const W = bitmap.width;
+      const H = bitmap.height;
+      const area = saved ? clampRect(saved.bounds, W, H) : { x: 0, y: 0, width: W, height: H };
+      const canvas = document.createElement('canvas');
+      canvas.width = area.width;
+      canvas.height = area.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bitmap, area.x, area.y, area.width, area.height, 0, 0, area.width, area.height);
+      bitmap.close();
+      const image = ctx.getImageData(0, 0, area.width, area.height);
+      const weights = saved ? await this._selectionWeights(saved.token, area, W, H) : null;
+      if (saved && !weights) return fail('Không đọc được hình dạng vùng chọn.');
+      const source = labStats(image.data, { weights });
+      if (!source) return fail('Vùng chọn trống (hoặc toàn điểm trong suốt).');
+      transferColors(image.data, source, ref.stats, { keepBrightness: Boolean(keepBrightness) });
+      ctx.putImageData(image, 0, 0);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const opacity = Math.round(Math.min(100, Math.max(10, Number(strength) || 100)));
+      const placed = await this._placeImageAsLayer(await blob.arrayBuffer(), area, MATCH_LAYER, {
+        maskLayer: saved?.token, opacity,
+      });
+      if (placed.isError) return placed;
+      this.undoDepth = 0;
+      return ok(JSON.stringify({
+        layer: JSON.parse(placed.content).layer,
+        area,
+        masked_to: saved ? 'selection' : 'whole image',
+        strength: opacity,
+        keep_brightness: Boolean(keepBrightness),
+        reference: { name: ref.name, colors: ref.colors },
+        before: describeStats(source),
+        note: 'Kết quả ở layer mới phía trên, ảnh gốc vẫn ở dưới; độ mạnh là độ mờ đục của layer.',
+      }));
+    } finally {
+      if (saved) await this._restoreSelection(saved.token);
+    }
+  }
+
+  /** Độ đậm (0-255) của vùng chọn đã lưu trong `area`: chép layer vùng chọn sang tài liệu tạm rồi xuất PNG. */
+  async _selectionWeights(token, area, W, H) {
+    const r = await this.bridge.exec(wrap(`
+var T = __findLayer(doc, ${JSON.stringify(token)});
+if (!T) { __fail('Không thấy vùng chọn đã lưu.'); return; }
+var tmp = app.documents.add(${W}, ${H}, 72, '__bokin_mask', NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
+app.activeDocument = doc;
+T.duplicate(tmp);
+app.activeDocument = tmp;
+tmp.activeLayer.visible = true;
+tmp.saveToOE('png');
+tmp.close(2);
+app.activeDocument = doc;
+__ok({});`));
+    const line = r.echoes.findLast((e) => e.startsWith(RESULT_PREFIX));
+    if (!r.completed || !line || !JSON.parse(line.slice(RESULT_PREFIX.length)).ok || !r.files.length) return null;
+    const bmp = await createImageBitmap(new Blob([r.files.at(-1)], { type: 'image/png' }));
+    const c = document.createElement('canvas');
+    c.width = area.width;
+    c.height = area.height;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(bmp, area.x, area.y, area.width, area.height, 0, 0, area.width, area.height);
+    bmp.close();
+    const d = x.getImageData(0, 0, area.width, area.height).data;
+    const w = new Uint8Array(area.width * area.height);
+    for (let i = 0; i < w.length; i++) w[i] = d[i * 4 + 3];
+    return w;
+  }
+
+  /**
    * Mở ảnh như tài liệu tạm, chép layer sang tài liệu đang làm việc, co giãn vào `area`.
    * options.maskRect: chỉ giữ vùng chữ nhật này (mép mềm = feather); options.maskLayer: mask theo độ trong suốt
    * của layer đó (vùng chọn đã lưu); options.hidden: ẩn layer sau khi đặt.
    */
-  async _placeImageAsLayer(buffer, area, layerName, { maskRect = null, feather = 0, maskLayer = null, hidden = false } = {}) {
+  async _placeImageAsLayer(buffer, area, layerName, { maskRect = null, feather = 0, maskLayer = null, hidden = false, opacity = 100 } = {}) {
     const token = `__bokin_${Math.random().toString(36).slice(2)}`;
     // Đánh dấu tài liệu đích bằng tên tạm (đổi tên không tạo bước lịch sử).
     const mark = await this.bridge.exec(`app.echoToOE(app.activeDocument.name); app.activeDocument.name = ${JSON.stringify(token)};`);
@@ -443,6 +608,7 @@ L.translate(${area.x} + sb.x * kx - b.x, ${area.y} + sb.y * ky - b.y);
 L.name = ${JSON.stringify(layerName)};
 ${maskScript}
 ${hidden ? 'L.visible = false;' : ''}
+${opacity < 100 ? `L.opacity = ${Math.round(opacity)};` : ''}
 __ok({ layer: L.name, bounds: __bounds(L) });`, { needsDocument: false }));
     if (result.isError) {
       // Dọn dẹp: trả lại tên tài liệu gốc nếu còn mang tên tạm.

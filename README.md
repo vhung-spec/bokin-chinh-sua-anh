@@ -11,6 +11,7 @@ Bokin là công cụ web giúp chỉnh sửa ảnh bằng câu lệnh tiếng Vi
 | Ánh sáng | "tăng sáng một chút", "tăng tương phản", "làm sâu vùng tối", "tự động cân chỉnh" |
 | Chỉnh màu | "ảnh bị ám vàng, cân bằng lại", "chỉ làm bầu trời xanh hơn", "giảm đỏ trên da", "lá cây chuyển màu thu", "màu tươi hơn nhưng giữ da tự nhiên" (Color Balance, Curves/Levels từng kênh R/G/B, Hue/Saturation theo dải màu, Vibrance) |
 | Phong cách màu | "chỉnh màu kiểu điện ảnh", "tone Hàn Quốc", "vintage", "ấm áp", "lạnh trầm", "phai màu", "đen trắng mạnh", "rực rỡ" (8 preset, chỉnh được độ mạnh) |
+| Màu theo ảnh mẫu | đính kèm một ảnh mẫu rồi gõ "chỉnh màu vùng này giống ảnh mẫu", "cho bầu trời có tông như ảnh mẫu" (giống Match Color của Photoshop) |
 | Chọn theo màu | "chọn bầu trời" (magic wand), "chọn mọi chỗ màu xanh lá", "chọn màu đỏ này" → chỉ chỉnh trong vùng đó |
 | Hiệu ứng | "đen trắng", "sepia", "tông ấm/lạnh", "đảo màu", "posterize" |
 | Bộ lọc | "làm nét", "làm mờ nền", "giảm nhiễu", "thêm hạt film", "mờ chuyển động" |
@@ -42,6 +43,12 @@ Khi chưa có ảnh, thẻ **Bắt đầu** hiện ra: mở ảnh từ máy ho�
 
 1. **Trò chuyện**: gõ yêu cầu tiếng Việt, hoặc bấm một câu gợi ý. Sau mỗi câu trả lời có chỉnh sửa, Bokin hiện các nút **Mạnh hơn**, **Nhẹ hơn**, **Hoàn tác** (gỡ mọi chỉnh sửa của câu lệnh đó) và **Tải JPG**, để khỏi phải gõ lại.
 2. **Màu nhanh** (miễn phí, không gọi Claude): 8 phong cách màu với thanh độ mạnh, cùng các nút Tự cân màu, Ấm hơn, Lạnh hơn, Tươi hơn, Nhạt hơn. Bấm một phong cách khác hoặc kéo thanh độ mạnh thì Bokin **thay** phong cách vừa áp, không chồng lên, nên thử nhiều kiểu thoải mái. Nếu đang có vùng chọn, chỉ vùng đó được chỉnh.
+
+   **Màu theo ảnh mẫu** (miễn phí, giống *Match Color* của Photoshop): bấm **Chọn ảnh mẫu** (ảnh có tông màu bạn muốn), khoanh hoặc **🖌 Tô vùng** cần chỉnh (bỏ trống = cả ảnh), rồi bấm **Áp màu giống ảnh mẫu**. Bokin đưa độ sáng, độ tương phản và màu của vùng đó về giống ảnh mẫu (tính trong không gian màu Lab, ngay trong trình duyệt, không gọi AI), đặt kết quả thành layer **"Màu theo ảnh mẫu"** có mask đúng hình vùng chọn (giữ mép mềm), ảnh gốc vẫn ở dưới. Thanh **Độ mạnh** là độ mờ đục của layer; kéo thì Bokin áp lại, thay kết quả vừa rồi. **Giữ độ sáng của ảnh gốc** chỉ lấy màu (hợp khi ảnh mẫu tối hay sáng hơn hẳn, hoặc với da người). Khoanh sát vùng cần đổi: vật khác màu nằm trong vùng cũng bị đổi theo.
+
+   **🖌 Tô vùng** (có ở cả tab Màu nhanh và Tạo bằng AI): Photopea chuyển sang chế độ tô (Quick Mask) với cọ. Tô màu đen lên chỗ cần chỉnh (hiện màu đỏ), phím **X** đổi sang trắng để xoá bớt, **[ ]** đổi cỡ cọ, rồi bấm **✓ Xong tô**: phần vừa tô thành vùng chọn. Vùng chọn đang có được giữ và cộng thêm phần tô.
+
+   Ở tab Trò chuyện, nút **🖼 Ảnh mẫu** đính kèm cùng ảnh mẫu đó; Claude nhận một bản thu nhỏ (một lần mỗi cuộc trò chuyện) và tự chỉnh màu vùng chọn giống ảnh mẫu, rồi tinh chỉnh thêm nếu bạn muốn sát hơn.
 3. **Tạo bằng AI** (Generative Fill, chỉ trả tiền ảnh AI) theo 3 bước:
    1. **Khoanh vùng** bằng các nút Lasso, Chữ nhật, Elip, Chọn nhanh, Đũa thần (bấm nút là Photopea chuyển sang công cụ đó, rồi vẽ trên ảnh), hoặc Đảo / Bỏ chọn. Bokin báo kích thước vùng đã khoanh.
    2. **Mô tả** điều muốn có bằng tiếng Việt; để trống = xoá vật thể trong vùng.
@@ -119,7 +126,7 @@ Khi chưa có `HF_TOKEN`, công cụ này được ẩn khỏi Claude và Claude
 ```
 
 1. Bạn gõ yêu cầu; trình duyệt gửi lịch sử hội thoại lên server.
-2. Server gọi Claude kèm danh sách **31 tool** (định nghĩa trong `shared/tools.js`).
+2. Server gọi Claude kèm danh sách **32 tool** (định nghĩa trong `shared/tools.js`).
 3. Claude trả về các lệnh `tool_use`. Trình duyệt chạy từng lệnh bằng cách gửi **script** vào Photopea qua Live Messaging API (`postMessage`), rồi gửi kết quả (`tool_result`, có thể kèm ảnh xem trước) lên lại.
 4. Lặp lại cho tới khi Claude trả lời xong.
 
@@ -135,8 +142,9 @@ server/
   ai-edit.js        chỉnh sửa bằng AI tạo ảnh qua Hugging Face (POST /api/ai-edit)
   system-prompt.js  hướng dẫn cho Claude
 shared/             dùng chung cho server và trình duyệt
-  tools.js          định nghĩa 31 tool + hàm sinh script Photopea cho từng tool
+  tools.js          định nghĩa 32 tool + hàm sinh script Photopea cho từng tool
   color.js          mã Color Balance, Curves/Levels từng kênh, Hue/Sat theo dải màu, 8 preset màu
+  color-transfer.js chỉnh màu theo ảnh mẫu (Lab, trung bình + độ trải, như Match Color)
   script-kit.js     hàm phụ trợ sinh script an toàn (thoát chuỗi, kiểm tra cú pháp)
   validate.js       kiểm tra tham số tool theo JSON Schema
 public/
@@ -160,7 +168,7 @@ Giao diện dùng được bên trong một web app khác, dưới một đườ
 lớp đăng nhập của web app đó, kể cả khi máy chủ của nó không phải Node:
 
 1. `npm run export:page -- <thư mục đích>` chép giao diện vào `<thư mục đích>/page/` và ghi `<thư mục đích>/claude.json`:
-   yêu cầu gửi Claude dựng sẵn (system prompt, 31 tool, cache, fallback), câu lệnh Generative Fill, bảng giá, giá trị mặc định.
+   yêu cầu gửi Claude dựng sẵn (system prompt, các tool, cache, fallback), câu lệnh Generative Fill, bảng giá, giá trị mặc định.
 2. Máy chủ của web app phục vụ `page/` và trả lời `api/health`, `api/chat`, `api/keepalive`, `api/fill-instruction`,
    `api/ai-edit` như `server/app.js`. Với `api/chat`: lấy `chat.with_ai` (hoặc `without_ai`) trong `claude.json`, thêm
    `messages` của trang rồi gọi Claude bằng SDK chính thức (`betas` trong đó là header `anthropic-beta`).
@@ -285,7 +293,7 @@ Các cách Bokin giảm chi phí:
 | Mở ảnh khác thì tự bắt đầu cuộc trò chuyện mới | Không gửi lại lịch sử và ảnh của ảnh cũ |
 | Hiện chi phí từng yêu cầu ("2 lượt gọi · ~0,012 USD") và tổng của cuộc trò chuyện; giới hạn chi phí mỗi yêu cầu (mặc định 0,5 USD) | Thấy rõ tiền đã dùng; một vòng lặp lỗi không thể đốt quá giới hạn |
 | Ảnh gửi AI tạo ảnh tối đa 1024px (chỉnh bằng `AI_EDIT_MAX_SIDE`) | Khoảng 0,03 USD thay vì 0,07 USD cho vùng lớn |
-| Cache cho phần cố định (31 tool + hướng dẫn, khoảng 9.000 token) | Các cuộc trò chuyện sau (trong vòng 5 phút kể từ lần gọi trước) chỉ tính giá đọc cache cho phần này (0,20 USD/triệu token với Opus 5.5 thay vì 5 USD ghi cache) |
+| Cache cho phần cố định (32 tool + hướng dẫn, khoảng 9.000 token) | Các cuộc trò chuyện sau (trong vòng 5 phút kể từ lần gọi trước) chỉ tính giá đọc cache cho phần này (0,20 USD/triệu token với Opus 5.5 thay vì 5 USD ghi cache) |
 
 Nhờ vậy, một lần chỉnh màu đơn giản qua ô chat có thể chỉ cần **2 lượt gọi Claude** (lượt 1: đọc yêu cầu và chỉnh; lượt 2: xem ảnh kết quả và trả lời), thay vì khoảng 5 lượt như trước. Số lượt thực tế với Claude thật được ghi trong báo cáo của `npm run eval`. Mỗi lượt vẫn gửi lại lịch sử hội thoại, kể cả các ảnh xem trước. Khi chuyển sang việc khác trên cùng ảnh, bấm **Trò chuyện mới** để cuộc trò chuyện gọn và rẻ. Chi phí hiển thị là **ước tính** từ số token API trả về và bảng giá trong `shared/prices.js`.
 

@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { startServer, openApp, tool, json } from './helpers.js';
+import { startServer, openApp, tool, json, pixel, solidPng } from './helpers.js';
 
 const requests = [];
 let failNext = null; // { status, body } để giả lập lỗi
@@ -32,7 +32,11 @@ const mock = http.createServer(async (req, res) => {
   const hasToolResult = Array.isArray(lastUser.content) && lastUser.content.some((b) => b.type === 'tool_result');
   const ids = new Set(body.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).map((b) => b.tool_use_id).filter(Boolean));
   let reply;
-  if (scenario === 'two-edits') {
+  if (scenario === 'match') {
+    reply = hasToolResult
+      ? { content: [{ type: 'text', text: 'Đã chỉnh màu vùng chọn giống ảnh mẫu.' }], stop_reason: 'end_turn' }
+      : { content: [{ type: 'tool_use', id: `tu_m${requests.length}`, name: 'match_reference_colors', input: { strength: 100 } }], stop_reason: 'tool_use' };
+  } else if (scenario === 'two-edits') {
     reply = hasToolResult
       ? { content: [{ type: 'text', text: 'Đã chỉnh sáng và màu.' }], stop_reason: 'end_turn' }
       : {
@@ -337,6 +341,41 @@ test('sau câu trả lời có chỉnh sửa: nút gợi ý; "Hoàn tác" gỡ M
   await page.waitForFunction(() => !window.bokin.state.toolbarBusy);
   assert.notDeepEqual(await px(), before);
   assert.ok(original);
+  scenario = 'design';
+});
+
+test('ảnh mẫu đính kèm ở ô chat: Claude nhận ảnh mẫu (một lần) và chỉnh màu vùng chọn giống ảnh đó', async () => {
+  scenario = 'match';
+  await page.click('#new-chat-btn');
+  json(await tool(page, 'create_document', { width: 200, height: 100, background: '#C83232' }));
+  json(await tool(page, 'select_area', { mode: 'rect', x: 0, y: 0, width: 100, height: 100 }));
+  await page.setInputFiles('#match-file', { name: 'mau-la.png', mimeType: 'image/png', buffer: solidPng(40, 30, [40, 160, 70]) });
+  await page.waitForSelector('#ref-chip:not([hidden])');
+  assert.match(await page.textContent('#ref-chip'), /Ảnh mẫu: mau-la\.png/);
+
+  const start = requests.length;
+  await page.fill('#input', 'Chỉnh màu vùng này giống ảnh mẫu');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.followups');
+  const first = requests[start].body.messages.at(-1).content;
+  const noteAt = first.findIndex((b) => b.type === 'text' && b.text.includes('ảnh mẫu "mau-la.png"'));
+  assert.ok(noteAt >= 0, 'có ghi chú ảnh mẫu');
+  assert.equal(first[noteAt + 1].type, 'image', 'kèm ảnh mẫu thu nhỏ');
+  assert.match(first[0].text, /"reference_image":\{"name":"mau-la\.png"/, 'thông tin ảnh có reference_image');
+  const left = await pixel(page, 50, 50);
+  assert.ok(left.g > 120 && left.r < 90, `vùng chọn đã thành xanh lá: ${JSON.stringify(left)}`);
+  assert.deepEqual(await pixel(page, 150, 50), { r: 200, g: 50, b: 50, a: 255 }, 'ngoài vùng chọn giữ nguyên');
+
+  // Tin nhắn sau trong cùng cuộc trò chuyện: không gửi lại ảnh mẫu
+  const second = requests.length;
+  scenario = 'text';
+  await page.fill('#input', 'Cảm ơn');
+  await page.press('#input', 'Enter');
+  await page.waitForFunction((n) => document.querySelectorAll('.msg.assistant').length >= n, 2);
+  const again = requests[second].body.messages.at(-1).content;
+  assert.ok(!again.some((b) => b.type === 'text' && b.text.includes('đã chọn ảnh mẫu')), 'không gửi lại ghi chú ảnh mẫu');
+  await page.click('#ref-chip-clear');
+  assert.equal(await page.isHidden('#ref-chip'), true);
   scenario = 'design';
 });
 
