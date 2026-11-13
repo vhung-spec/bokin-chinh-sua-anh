@@ -2,7 +2,7 @@
 
 Bokin là công cụ web giúp chỉnh sửa ảnh bằng câu lệnh tiếng Việt. Bạn gõ yêu cầu như *"làm ảnh sáng hơn, cắt vuông, thêm chữ GIẢM 50% màu đỏ ở góc trên"*; **Claude** hiểu yêu cầu và điều khiển **[Photopea](https://www.photopea.com)**, một trình chỉnh ảnh giống Photoshop chạy ngay trong trình duyệt, để thực hiện. Bạn vẫn có thể chỉnh tay trực tiếp trong Photopea bất cứ lúc nào.
 
-![Giao diện Bokin: Photopea bên trái, ô chat bên phải](docs/screenshot.jpg)
+![Giao diện Bokin: Photopea bên trái; bên phải là thanh công cụ, ba tab Trò chuyện / Màu nhanh / Tạo bằng AI](docs/screenshot.jpg)
 
 ## Bokin làm được gì
 
@@ -23,10 +23,29 @@ Bokin là công cụ web giúp chỉnh sửa ảnh bằng câu lệnh tiếng Vi
 
 Claude **tự xem ảnh** (trước và sau khi sửa) để chọn vị trí đặt chữ, kiểm tra độ sáng, rồi tự hoàn tác nếu kết quả chưa ổn.
 
-Ngoài ô chat, bên phải còn có hai bảng thao tác nhanh **không cần gọi Claude**:
+## Cách dùng
 
-- **Màu nhanh** (miễn phí): 8 phong cách màu với thanh độ mạnh, cùng các nút Tự cân màu, Ấm hơn, Lạnh hơn, Tươi hơn, Nhạt hơn, Hoàn tác. Bấm một phong cách khác hoặc kéo thanh độ mạnh thì Bokin **thay** phong cách vừa áp, không chồng lên, nên thử nhiều kiểu thoải mái. Nếu đang có vùng chọn, chỉ vùng đó được chỉnh.
-- **Generative Fill** (chỉ trả tiền ảnh AI): khoanh vùng trong Photopea, gõ yêu cầu tiếng Việt (để trống = xoá vật thể), chọn 1–3 phương án rồi bấm **Tạo**. Có nút chuyển qua lại giữa các phương án.
+Khung bên phải gồm **thanh công cụ** dùng chung và **ba tab**, mỗi lúc chỉ hiện một tab nên không rối mắt. Bokin nhớ tab bạn dùng lần trước.
+
+**Thanh công cụ** (luôn ở trên cùng):
+
+| Nút | Tác dụng |
+|---|---|
+| **Mở ảnh** | Mở ảnh từ máy (hoặc kéo thả ảnh vào bất kỳ đâu trên trang) |
+| **Tải ảnh** | Chọn JPG (nhẹ, đăng mạng), PNG (giữ chất lượng, nền trong suốt), WEBP hoặc PSD (giữ layer để sửa tiếp) |
+| **Hoàn tác** / **Làm lại** | Gỡ **cả thao tác** vừa làm trong một lần bấm: một phong cách màu, một lần Generative Fill (khoảng chục bước trong Photopea), hay toàn bộ những gì Claude làm cho một câu lệnh. Phím tắt **Ctrl+Z** / **Ctrl+Y** (khi con trỏ không nằm trong Photopea hay ô nhập) |
+| **So sánh** | **Nhấn giữ** để xem ảnh gốc lúc vừa mở, thả ra để quay lại ảnh đã chỉnh |
+
+Khi chưa có ảnh, thẻ **Bắt đầu** hiện ra: mở ảnh từ máy hoặc tạo ảnh trống theo cỡ có sẵn (vuông 1080, bìa Facebook 1200×630, story 1080×1920, 16:9 1280×720, A4).
+
+**Ba tab:**
+
+1. **Trò chuyện**: gõ yêu cầu tiếng Việt, hoặc bấm một câu gợi ý. Sau mỗi câu trả lời có chỉnh sửa, Bokin hiện các nút **Mạnh hơn**, **Nhẹ hơn**, **Hoàn tác** (gỡ mọi chỉnh sửa của câu lệnh đó) và **Tải JPG**, để khỏi phải gõ lại.
+2. **Màu nhanh** (miễn phí, không gọi Claude): 8 phong cách màu với thanh độ mạnh, cùng các nút Tự cân màu, Ấm hơn, Lạnh hơn, Tươi hơn, Nhạt hơn. Bấm một phong cách khác hoặc kéo thanh độ mạnh thì Bokin **thay** phong cách vừa áp, không chồng lên, nên thử nhiều kiểu thoải mái. Nếu đang có vùng chọn, chỉ vùng đó được chỉnh.
+3. **Tạo bằng AI** (Generative Fill, chỉ trả tiền ảnh AI) theo 3 bước:
+   1. **Khoanh vùng** bằng các nút Lasso, Chữ nhật, Elip, Chọn nhanh, Đũa thần (bấm nút là Photopea chuyển sang công cụ đó, rồi vẽ trên ảnh), hoặc Đảo / Bỏ chọn. Bokin báo kích thước vùng đã khoanh.
+   2. **Mô tả** điều muốn có bằng tiếng Việt; để trống = xoá vật thể trong vùng.
+   3. Chọn 1–3 phương án rồi bấm **Tạo** (nút chỉ bấm được khi đã khoanh vùng). Có nút chuyển qua lại giữa các phương án; bấm **Hoàn tác** một lần là gỡ cả lần tạo, vùng chọn vẫn còn để thử lại.
 
 ## Cài đặt và chạy
 
@@ -77,7 +96,7 @@ Các yêu cầu thay đổi **nội dung** ảnh (xoá vật thể, đổi nền
 1. Tạo token tại [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) với quyền **Make calls to Inference Providers**.
 2. Thêm `HF_TOKEN=...` vào `.env` rồi khởi động lại server.
 
-**Dùng như Generative Fill của Photoshop:** khoanh vùng trong Photopea bằng bất kỳ công cụ chọn nào (Lasso, Marquee, Quick Selection, Magic Wand, cọ Quick Mask…), bấm vào ô chat (Bokin hiện dòng *"Đang có vùng chọn …"*), rồi gõ yêu cầu như *"xoá vật thể này"*, *"thêm một chậu cây vào đây"*, *"cho 3 phương án"*. AI chỉ thay **đúng hình dạng vùng chọn** (giữ cả mép mềm), và vùng chọn vẫn còn sau đó để thử lại. Nếu yêu cầu nhiều phương án, mỗi phương án nằm trên một layer riêng; chỉ phương án đầu được hiện, bật/tắt layer để so sánh.
+**Dùng như Generative Fill của Photoshop:** cách nhanh nhất là tab **Tạo bằng AI** ở trên. Trong tab Trò chuyện cũng được: khoanh vùng trong Photopea bằng bất kỳ công cụ chọn nào (Lasso, Marquee, Quick Selection, Magic Wand, cọ Quick Mask…), bấm vào ô chat (Bokin hiện dòng *"Đang có vùng chọn …"*), rồi gõ yêu cầu như *"xoá vật thể này"*, *"thêm một chậu cây vào đây"*, *"cho 3 phương án"*. AI chỉ thay **đúng hình dạng vùng chọn** (giữ cả mép mềm), và vùng chọn vẫn còn sau đó để thử lại. Nếu yêu cầu nhiều phương án, mỗi phương án nằm trên một layer riêng; chỉ phương án đầu được hiện, bật/tắt layer để so sánh.
 
 Cách hoạt động: Bokin gửi ảnh (hoặc chỉ vùng cần sửa kèm một phần xung quanh) cho mô hình, rồi đặt kết quả thành **layer mới** phía trên. Trước khi ghép, Bokin **khớp màu và độ sáng** của kết quả với ảnh gốc, dựa trên phần xung quanh vùng chọn, để chỗ ghép không lộ viền. Ảnh gốc vẫn còn bên dưới; khi sửa theo vùng, Bokin thêm mask để chỉ thay đúng vùng đó. Mỗi lần sửa mất khoảng 10–60 giây và tính phí vào tài khoản Hugging Face (thường vài cent mỗi ảnh; xem bảng giá của nhà cung cấp). Mô hình không tạo được nền trong suốt; muốn tách nền trong suốt thì dùng *Remove BG / Magic Cut* có sẵn trong Photopea.
 
@@ -121,7 +140,9 @@ shared/             dùng chung cho server và trình duyệt
   script-kit.js     hàm phụ trợ sinh script an toàn (thoát chuỗi, kiểm tra cú pháp)
   validate.js       kiểm tra tham số tool theo JSON Schema
 public/
-  index.html, styles.css, app.js   giao diện chat
+  index.html, styles.css, app.js   giao diện: thanh công cụ, 3 tab, vòng lặp chat
+  quick-panels.js                  tab Màu nhanh và tab Tạo bằng AI
+  history.js                       hoàn tác / làm lại theo thao tác, xem ảnh gốc
   photopea-bridge.js               giao tiếp với Photopea
   tool-runner.js                   chạy tool, xem ảnh, hoàn tác, xuất file
 test/
@@ -250,8 +271,8 @@ Nhờ vậy, một lần chỉnh màu đơn giản qua ô chat có thể chỉ c
 
 Giới hạn:
 
-- Hoàn tác/làm lại của Bokin dựa trên lịch sử Photopea. Nếu bạn tự bấm Ctrl+Z trong Photopea, lần hoàn tác tiếp theo của Bokin có thể lệch bước.
-- Chỉnh sửa bằng AI trên toàn ảnh lớn: ảnh được thu nhỏ tối đa 1536px trước khi gửi, nên kết quả kém nét hơn ảnh gốc. Với chỉnh sửa cục bộ, Claude chỉ gửi vùng cần sửa, nên phần còn lại giữ nguyên chất lượng.
+- Hoàn tác/làm lại của Bokin dựa trên lịch sử Photopea. Nếu bạn tự bấm Ctrl+Z trong Photopea (hoặc bấm vào bảng Lịch sử của Photopea), Bokin không biết, nên lần hoàn tác tiếp theo có thể lệch bước; khi đó Bokin chỉ hoàn tác từng bước một. Nên dùng nút **Hoàn tác** của Bokin.
+- Chỉnh sửa bằng AI trên toàn ảnh lớn: ảnh được thu nhỏ còn cạnh dài tối đa 1024px (đổi bằng `AI_EDIT_MAX_SIDE`) trước khi gửi, nên kết quả kém nét hơn ảnh gốc. Với chỉnh sửa theo vùng chọn, Bokin chỉ gửi vùng cần sửa kèm một phần xung quanh, nên phần còn lại giữ nguyên chất lượng.
 - Gộp layer vào layer `Background` bị khoá có thể thất bại; khi đó dùng "gộp tất cả" (flatten).
 
 ## Điều khoản Photopea

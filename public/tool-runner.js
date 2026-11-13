@@ -21,8 +21,20 @@ export class ToolRunner {
     this.aiMaxSide = 1024;
   }
 
-  /** @returns {Promise<ToolOutcome>} */
+  /**
+   * Chạy một tool rồi báo cho giao diện (onExecuted) để cập nhật trạng thái: còn ảnh không, vùng chọn,
+   * và xoá danh sách "làm lại" khi có chỉnh sửa mới.
+   * @returns {Promise<ToolOutcome>}
+   */
   async execute(name, input = {}) {
+    const outcome = await this._execute(name, input);
+    try {
+      await this.onExecuted?.(name, outcome);
+    } catch { /* lỗi giao diện không được làm hỏng kết quả tool */ }
+    return outcome;
+  }
+
+  async _execute(name, input = {}) {
     const tool = TOOL_MAP.get(name);
     if (!tool) return fail(`Không có công cụ tên "${name}".`);
     const problems = validate(input, tool.input_schema);

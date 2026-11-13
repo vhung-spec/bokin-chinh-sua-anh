@@ -192,13 +192,13 @@ test('bấm vào ô chat khi đang có vùng chọn: hiện gợi ý Generative 
 
 test('ô Generative Fill trực tiếp: dịch bằng model rẻ, 2 phương án, chuyển phương án', async () => {
   await freshDoc(page, { width: 400, height: 300, background: '#FF0000' });
-  await page.click('#fill-panel summary');
+  await page.click('#tab-fill');
   await page.waitForSelector('#fill-selection:has-text("Chưa có vùng chọn")');
-
-  await page.click('#fill-run');
-  await page.waitForSelector('#fill-status:has-text("khoanh vùng")');
+  assert.equal(await page.isDisabled('#fill-run'), true, 'chưa khoanh vùng: nút Tạo bị khoá');
 
   json(await tool(page, 'select_area', { mode: 'ellipse', x: 100, y: 75, width: 200, height: 150 }));
+  await page.waitForSelector('#fill-run:not([disabled])');
+  assert.match(await page.textContent('#fill-selection'), /Đã khoanh vùng 200×150 px/);
   await page.fill('#fill-prompt', 'thêm một con mèo nhỏ');
   await page.selectOption('#fill-variations', '2');
   const before = calls.length;
@@ -228,6 +228,7 @@ test('ô Generative Fill trực tiếp: dịch bằng model rẻ, 2 phương án
 test('ô Generative Fill: để trống = xoá vật thể, không gọi Claude', async () => {
   await freshDoc(page, { width: 400, height: 300, background: '#FF0000' });
   json(await tool(page, 'select_area', { mode: 'rect', x: 150, y: 100, width: 100, height: 100 }));
+  await page.waitForSelector('#fill-run:not([disabled])');
   await page.fill('#fill-prompt', '');
   await page.selectOption('#fill-variations', '1');
   const t0 = translations.length;
@@ -238,6 +239,33 @@ test('ô Generative Fill: để trống = xoá vật thể, không gọi Claude'
   assert.deepEqual(await pixel(page, 200, 150), MAGENTA);
   assert.deepEqual(await pixel(page, 20, 20), RED);
   assert.equal(await page.isVisible('#fill-variants'), false, '1 phương án: không hiện nút chuyển');
+
+  // Hoàn tác MỘT lần gỡ cả lần tạo (khoảng chục bước lịch sử), vùng chọn vẫn còn như trước
+  await page.click('#undo-btn');
+  await page.waitForFunction(() => !window.bokin.state.toolbarBusy);
+  assert.match(await page.textContent('#toast'), /Đã hoàn tác Generative Fill/);
+  const info = json(await tool(page, 'get_document_info'));
+  assert.deepEqual(info.layers.map((l) => l.name), ['Background'], 'không còn layer AI');
+  assert.deepEqual(await pixel(page, 200, 150), RED);
+  assert.ok(info.selection, 'vùng chọn được giữ lại để thử tiếp');
+  // Làm lại: kết quả quay lại
+  await page.click('#redo-btn');
+  await page.waitForFunction(() => !window.bokin.state.toolbarBusy);
+  assert.deepEqual(await pixel(page, 200, 150), MAGENTA);
+});
+
+test('nút công cụ khoanh vùng: đổi công cụ Photopea, Bỏ chọn khoá nút Tạo', async () => {
+  await freshDoc(page, { width: 200, height: 150, background: '#FF0000' });
+  await page.click('#tab-fill');
+  await page.click('#select-tools button[data-tool="lassoTool"]');
+  await page.waitForSelector('#fill-selection:has-text("vẽ quanh vật thể")');
+  assert.equal(await page.getAttribute('#select-tools button.active', 'data-tool'), 'lassoTool');
+  json(await tool(page, 'select_area', { mode: 'all' }));
+  await page.waitForSelector('#fill-run:not([disabled])');
+  await page.click('#select-tools button[data-select="none"]');
+  await page.waitForSelector('#fill-run[disabled]');
+  assert.equal(json(await tool(page, 'get_document_info')).selection, null);
+  await page.click('#magic-cut-btn'); // mở cửa sổ Magic Cut của Photopea (không lỗi)
 });
 
 test('không có lỗi JavaScript trên trang', () => {

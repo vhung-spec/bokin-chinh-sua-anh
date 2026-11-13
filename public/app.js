@@ -7,6 +7,7 @@ import { PhotopeaBridge } from './photopea-bridge.js';
 import { ToolRunner } from './tool-runner.js';
 import { toolLabel } from '/shared/tools.js';
 import { setupColorPanel, setupFillPanel } from './quick-panels.js';
+import { ActionLog } from './history.js';
 import { usageCost, totalCost, formatUsd } from '/shared/prices.js';
 
 const MAX_ROUNDS = 15; // số lượt gọi Claude tối đa cho một yêu cầu
@@ -60,6 +61,8 @@ const state = {
   requestUsageStart: 0,
   /** vị trí trong state.usage nơi cuộc trò chuyện hiện tại bắt đầu */
   conversationUsageStart: 0,
+  /** đang chạy thao tác của thanh công cụ (hoàn tác, so sánh...) */
+  toolbarBusy: false,
 };
 
 const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: 'vi' } } });
@@ -71,19 +74,33 @@ function addNote(key, text) {
   state.pendingNotes.push({ key, text });
 }
 
-const colorPanel = setupColorPanel({ runner, bridge, isBusy: () => state.busy, addNote });
-rememberOpen(document.getElementById('color-panel'), 'bokin.colorPanelOpen');
-const fillPanel = setupFillPanel({ runner, isBusy: () => state.busy, addNote });
-rememberOpen(document.getElementById('fill-panel'), 'bokin.fillPanelOpen');
+const log = new ActionLog(runner, bridge);
+const isBusy = () => state.busy || state.toolbarBusy;
+const openImage = () => els.fileInput.click();
+const colorPanel = setupColorPanel({ runner, log, isBusy, addNote, openImage });
+const fillPanel = setupFillPanel({ runner, bridge, log, isBusy, addNote, openImage });
+
+// Sau mỗi tool: có chỉnh sửa mới thì không còn gì để "làm lại"; cập nhật thẻ Bắt đầu và vùng chọn.
+const NO_EDIT_TOOLS = new Set(['undo', 'redo', 'get_document_info', 'view_image', 'export_image']);
+runner.onExecuted = async (name, outcome) => {
+  if (!outcome.isError && !NO_EDIT_TOOLS.has(name)) log.clearRedo();
+  if (!NO_EDIT_TOOLS.has(name)) scheduleRefresh();
+  // Ảnh mới tạo (kể cả do Claude tạo): đây là "ảnh gốc" để so sánh.
+  if (name === 'create_document' && !outcome.isError) {
+    log.reset();
+    await log.markOrigin();
+  }
+};
 
 // Cho phép kiểm thử tự động / gỡ lỗi từ console.
-window.bokin = { bridge, runner, state, executeTool: (name, input) => runner.execute(name, input) };
+window.bokin = { bridge, runner, state, log, showTab, executeTool: (name, input) => runner.execute(name, input) };
 
 // ───────────────────────────── Khởi động ─────────────────────────────
 setStatus('Đang tải Photopea…');
 bridge.ready.then(() => {
   els.editorLoading.hidden = true;
   setStatus('Photopea đã sẵn sàng', 'ok');
+  refreshUi();
 });
 
 fetch('/api/health')
@@ -141,6 +158,8 @@ function submitInput() {
 async function send(text) {
   if (state.busy) return;
   $('selection-hint').hidden = true;
+  showTab('chat');
+  for (const old of els.chat.querySelectorAll('.followups')) old.remove();
   setBusy(true);
   renderUser(text);
   // Gửi kèm trạng thái hiện tại (thông tin ảnh + ảnh xem trước) để Claude không phải tốn 2 lượt gọi đầu tiên.
@@ -150,7 +169,32 @@ async function send(text) {
   content.push({ type: 'text', text });
   state.messages.push({ role: 'user', content });
   state.requestUsageStart = state.usage.length;
-  await runLoop();
+  // Ghi cả yêu cầu thành MỘT thao tác: bấm Hoàn tác là gỡ mọi chỉnh sửa Claude làm cho yêu cầu này.
+  const short = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+  const before = log.undoStack.length;
+  await log.record({ kind: 'chat', label: `yêu cầu "${short}"` }, () => runLoop());
+  if (log.undoStack.length > before) renderFollowups();
+  refreshUi();
+}
+
+/** Nút gợi ý sau câu trả lời có chỉnh sửa: chỉnh thêm nhanh, hoàn tác (miễn phí), tải ảnh. */
+function renderFollowups() {
+  const box = make('div', 'followups');
+  const add = (label, onClick) => {
+    const b = make('button', '', label);
+    b.type = 'button';
+    b.addEventListener('click', () => {
+      if (isBusy()) return;
+      box.remove();
+      onClick();
+    });
+    box.append(b);
+  };
+  add('Mạnh hơn', () => send('Mạnh hơn một chút'));
+  add('Nhẹ hơn', () => send('Nhẹ hơn một chút'));
+  add('Hoàn tác', () => doUndo());
+  add('Tải JPG', () => exportImage('jpg'));
+  append(box);
 }
 
 /** Ảnh chụp trạng thái tự động gửi kèm mỗi tin nhắn của người dùng. */
@@ -434,6 +478,8 @@ async function openFile(file) {
     setStatus(`Đang mở ${file.name}…`);
     await bridge.openFile(await file.arrayBuffer(), file.name);
     runner.undoDepth = 0;
+    log.reset();
+    await log.markOrigin();
     colorPanel.reset();
     // Ảnh mới: lịch sử trò chuyện về ảnh cũ (kèm các ảnh xem trước) không còn giúp ích mà lượt gọi nào cũng
     // phải gửi lại, nên bắt đầu cuộc trò chuyện mới.
@@ -444,6 +490,7 @@ async function openFile(file) {
       ? `Đã mở ảnh: ${file.name}. Bắt đầu cuộc trò chuyện mới cho ảnh này (không gửi lại lịch sử ảnh cũ, đỡ tốn phí).`
       : `Đã mở ảnh: ${file.name}`);
     setStatus('Photopea đã sẵn sàng', 'ok');
+    refreshUi();
   } catch (error) {
     renderError(error.message);
     setStatus('Photopea đã sẵn sàng', 'ok');
@@ -455,13 +502,18 @@ els.downloadBtn.addEventListener('click', (e) => {
   toggleMenu(els.downloadMenu.hidden);
 });
 document.addEventListener('click', () => toggleMenu(false));
-els.downloadMenu.addEventListener('click', async (e) => {
+els.downloadMenu.addEventListener('click', (e) => {
   const format = e.target.closest('button')?.dataset.format;
   if (!format) return;
   toggleMenu(false);
-  const outcome = await runner.execute('export_image', { format });
-  if (outcome.isError) renderError(outcome.content);
+  exportImage(format);
 });
+
+async function exportImage(format) {
+  const outcome = await runner.execute('export_image', { format });
+  if (outcome.isError) showToast(outcome.content, 'error');
+  else showToast(`Đã tải ${JSON.parse(outcome.content).saved_as}.`);
+}
 
 function toggleMenu(open) {
   els.downloadMenu.hidden = !open;
@@ -500,9 +552,147 @@ function resetConversation() {
   els.empty.hidden = false;
 }
 
+// ───────────────────────────── Tab ─────────────────────────────
+const TABS = ['chat', 'color', 'fill'];
+
+function showTab(name) {
+  if (!TABS.includes(name)) return;
+  for (const t of TABS) {
+    $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
+    $(`panel-${t}`).hidden = t !== name;
+  }
+  try { localStorage.setItem('bokin.tab', name); } catch { /* không bắt buộc */ }
+  if (name === 'fill') fillPanel.refresh();
+}
+
+for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('[data-goto]');
+  if (target) showTab(target.dataset.goto);
+});
+try {
+  const saved = localStorage.getItem('bokin.tab');
+  if (TABS.includes(saved)) showTab(saved);
+} catch { /* không bắt buộc */ }
+
+// ───────────────────────────── Thanh công cụ ─────────────────────────────
+async function toolbarAction(task) {
+  if (isBusy()) {
+    showToast('Bokin đang làm việc, đợi xong rồi thử lại.', 'error');
+    return;
+  }
+  state.toolbarBusy = true;
+  try {
+    await task();
+  } finally {
+    state.toolbarBusy = false;
+    refreshUi();
+  }
+}
+
+function doUndo() {
+  return toolbarAction(async () => {
+    const r = await log.undo();
+    if (r.isError) return showToast(r.content, 'error');
+    colorPanel.reset();
+    showToast(r.label ? `Đã hoàn tác ${r.label}.` : 'Đã hoàn tác một bước.');
+    addNote('undo', `(Ghi chú hệ thống: người dùng đã bấm Hoàn tác${r.label ? `: ${r.label}` : ' một bước'}.)`);
+  });
+}
+
+function doRedo() {
+  return toolbarAction(async () => {
+    const r = await log.redo();
+    if (r.isError) return showToast(r.content, 'error');
+    showToast(r.label ? `Đã làm lại ${r.label}.` : 'Đã làm lại một bước.');
+    addNote('undo', `(Ghi chú hệ thống: người dùng đã bấm Làm lại${r.label ? `: ${r.label}` : ' một bước'}.)`);
+  });
+}
+
+$('undo-btn').addEventListener('click', doUndo);
+$('redo-btn').addEventListener('click', doRedo);
+
+// Giữ để xem ảnh gốc: nhấn = hiện trạng thái đầu tiên trong lịch sử, thả = quay lại.
+const compareBtn = $('compare-btn');
+let comparing = false;
+async function startCompare() {
+  if (comparing || isBusy()) return;
+  comparing = true;
+  state.toolbarBusy = true;
+  compareBtn.classList.add('pressed');
+  await log.showOriginal();
+}
+async function endCompare() {
+  if (!comparing) return;
+  comparing = false;
+  compareBtn.classList.remove('pressed');
+  await log.restore();
+  state.toolbarBusy = false;
+}
+compareBtn.addEventListener('pointerdown', startCompare);
+for (const ev of ['pointerup', 'pointerleave', 'pointercancel', 'blur']) compareBtn.addEventListener(ev, endCompare);
+compareBtn.addEventListener('keydown', (e) => {
+  if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
+    e.preventDefault();
+    startCompare();
+  }
+});
+compareBtn.addEventListener('keyup', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') endCompare();
+});
+
+// Phím tắt khi đang ở ngoài Photopea (trong Photopea, Ctrl+Z là hoàn tác riêng của Photopea).
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.target.closest('textarea, input, select')) return;
+  const key = e.key.toLowerCase();
+  if (key === 'z' && !e.shiftKey) { e.preventDefault(); doUndo(); }
+  else if (key === 'y' || (key === 'z' && e.shiftKey)) { e.preventDefault(); doRedo(); }
+});
+
+// ───────────────────────────── Thẻ Bắt đầu + trạng thái ─────────────────────────────
+$('start-open').addEventListener('click', openImage);
+$('start-blank').addEventListener('click', () => toolbarAction(async () => {
+  const option = $('start-size').selectedOptions[0];
+  const [width, height] = option.value.split('x').map(Number);
+  const out = await runner.execute('create_document', { width, height, background: '#FFFFFF', name: option.textContent });
+  if (out.isError) return showToast(out.content, 'error');
+  addNote('opened-file', `(Ghi chú hệ thống: người dùng vừa tạo ảnh trống ${width}x${height} px trong Photopea.)`);
+  showToast(`Đã tạo ảnh trống ${width}×${height}.`);
+}));
+
+/** Cập nhật những gì phụ thuộc vào tài liệu trong Photopea: thẻ Bắt đầu, nút hoàn tác, vùng chọn. */
+async function refreshUi() {
+  if (!bridge.isReady || state.busy) return;
+  const r = await bridge.exec('app.echoToOE(String(app.documents.length));').catch(() => null);
+  const hasDoc = Number(r?.echoes?.[0]) > 0;
+  $('start-card').hidden = hasDoc;
+  for (const id of ['undo-btn', 'redo-btn', 'compare-btn', 'download-btn']) $(id).disabled = !hasDoc;
+  fillPanel.refresh();
+}
+
+let refreshTimer = null;
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(refreshUi, 300);
+}
+// Người dùng có thể mở / đóng ảnh, khoanh vùng ngay trong Photopea: cập nhật khi chuột rời khỏi Photopea.
+els.iframe.addEventListener('mouseleave', scheduleRefresh);
+window.addEventListener('focus', scheduleRefresh);
+
+let toastTimer = null;
+function showToast(text, kind = '') {
+  const toast = $('toast');
+  toast.textContent = text;
+  toast.className = `toast ${kind}`;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.hidden = true; }, kind === 'error' ? 5000 : 2800);
+}
+
 // ───────────────────────────── Hiển thị ─────────────────────────────
 function append(el) {
-  els.empty.hidden = true;
+  // Ghi chú hệ thống (vd. "Đã mở ảnh") không che các gợi ý: người dùng cần gợi ý nhất ngay sau khi mở ảnh.
+  if (!el.classList.contains('info')) els.empty.hidden = true;
   els.chat.append(el);
   els.chat.scrollTop = els.chat.scrollHeight;
   return el;
@@ -585,16 +775,6 @@ function summarizeInput(name, input) {
     .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
     .join(', ')
     .slice(0, 200);
-}
-
-/** Nhớ trạng thái mở/đóng của một bảng <details> (chỉ là tiện ích, không bắt buộc). */
-function rememberOpen(details, key) {
-  try {
-    if (localStorage.getItem(key) === '1') details.open = true;
-    details.addEventListener('toggle', () => {
-      try { localStorage.setItem(key, details.open ? '1' : '0'); } catch { /* bỏ qua */ }
-    });
-  } catch { /* localStorage có thể bị chặn */ }
 }
 
 function setStatus(text, kind = '') {

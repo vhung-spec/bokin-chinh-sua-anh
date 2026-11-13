@@ -32,7 +32,17 @@ const mock = http.createServer(async (req, res) => {
   const hasToolResult = Array.isArray(lastUser.content) && lastUser.content.some((b) => b.type === 'tool_result');
   const ids = new Set(body.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).map((b) => b.tool_use_id).filter(Boolean));
   let reply;
-  if (scenario === 'text') {
+  if (scenario === 'two-edits') {
+    reply = hasToolResult
+      ? { content: [{ type: 'text', text: 'Đã chỉnh sáng và màu.' }], stop_reason: 'end_turn' }
+      : {
+        content: [
+          { type: 'tool_use', id: `tu_a${requests.length}`, name: 'adjust_brightness_contrast', input: { brightness: 40 } },
+          { type: 'tool_use', id: `tu_b${requests.length}`, name: 'adjust_hue_saturation', input: { saturation: -60 } },
+        ],
+        stop_reason: 'tool_use',
+      };
+  } else if (scenario === 'text') {
     reply = { content: [{ type: 'text', text: `Trả lời ${requests.length}` }], stop_reason: 'end_turn' };
   } else if (scenario === 'color') {
     reply = hasToolResult
@@ -128,9 +138,7 @@ test('một yêu cầu chạy trọn vòng lặp tool và hiển thị câu tr�
   assert.equal(doc.layers[0].name, 'Lời chào');
 
   if (process.env.E2E_SCREENSHOT) {
-    await page.click('#color-panel summary'); // cho thấy bảng Màu nhanh trong ảnh chụp
     await page.screenshot({ path: process.env.E2E_SCREENSHOT, quality: 82 });
-    await page.click('#color-panel summary');
   }
 });
 
@@ -295,6 +303,40 @@ test('hiện chi phí từng yêu cầu và cả cuộc trò chuyện; vượt g
   await page.waitForSelector('.msg.assistant >> text=Đã cân bằng lại màu');
   assert.equal(requests.slice(n).filter((r) => r.body.max_tokens !== 0).length, 2, 'tiếp tục đúng từ chỗ dừng');
   await page.evaluate(() => { window.bokin.state.budget = 0.5; });
+  scenario = 'design';
+});
+
+test('sau câu trả lời có chỉnh sửa: nút gợi ý; "Hoàn tác" gỡ MỌI chỉnh sửa của yêu cầu trong một lần bấm', async () => {
+  scenario = 'two-edits';
+  await page.click('#new-chat-btn');
+  json(await tool(page, 'create_document', { width: 120, height: 80, background: '#C86432' }));
+  const original = await page.evaluate(() => window.bokin.executeTool('get_document_info', {}));
+  const px = () => page.evaluate(async () => {
+    const e = await window.bokin.bridge.exportDocument('png');
+    const bmp = await createImageBitmap(new Blob([e.buffer]));
+    const c = new OffscreenCanvas(bmp.width, bmp.height); const x = c.getContext('2d'); x.drawImage(bmp, 0, 0);
+    return [...x.getImageData(5, 5, 1, 1).data];
+  });
+  const before = await px();
+  await page.fill('#input', 'Sáng hơn và bớt màu');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.followups');
+  assert.deepEqual(await page.locator('.followups button').allTextContents(), ['Mạnh hơn', 'Nhẹ hơn', 'Hoàn tác', 'Tải JPG']);
+  assert.notDeepEqual(await px(), before);
+
+  await page.click('.followups button:has-text("Hoàn tác")');
+  await page.waitForFunction(() => !window.bokin.state.toolbarBusy);
+  assert.deepEqual(await px(), before, 'cả 2 chỉnh sửa được gỡ trong một lần bấm');
+  assert.match(await page.textContent('#toast'), /Đã hoàn tác yêu cầu "Sáng hơn và bớt màu"/);
+  const notes = await page.evaluate(() => window.bokin.state.pendingNotes.map((n) => n.text).join(' '));
+  assert.match(notes, /Hoàn tác/, 'báo cho Claude biết');
+
+  // Phím tắt Ctrl+Y (ngoài ô nhập) = làm lại
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Control+y');
+  await page.waitForFunction(() => !window.bokin.state.toolbarBusy);
+  assert.notDeepEqual(await px(), before);
+  assert.ok(original);
   scenario = 'design';
 });
 

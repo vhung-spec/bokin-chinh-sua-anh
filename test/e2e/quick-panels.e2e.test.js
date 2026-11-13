@@ -9,7 +9,7 @@ let server, browser, page, pageErrors;
 before(async () => {
   ({ server } = await startServer());
   ({ browser, page, pageErrors } = await openApp(`http://127.0.0.1:${server.address().port}`));
-  await page.click('#color-panel summary');
+  await page.click('#tab-color');
 });
 
 after(async () => {
@@ -36,12 +36,12 @@ async function setStrength(value) {
   }, value);
 }
 
-const waitIdle = () => page.waitForFunction(() => !document.querySelector('#preset-grid button').disabled);
+const waitIdle = () => page.waitForFunction(() => !document.querySelector('#preset-grid button').disabled && !window.bokin.state.toolbarBusy);
 
 test('bảng có 8 preset và các nút nhanh', async () => {
   assert.equal(await page.locator('#preset-grid button').count(), 8);
   assert.deepEqual(await page.locator('#quick-actions button').allTextContents(),
-    ['Tự cân màu', 'Ấm hơn', 'Lạnh hơn', 'Tươi hơn', 'Nhạt hơn', 'Hoàn tác']);
+    ['Tự cân màu', 'Ấm hơn', 'Lạnh hơn', 'Tươi hơn', 'Nhạt hơn']);
 });
 
 test('áp preset; đổi preset / độ mạnh thì THAY THẾ chứ không chồng lên; hoàn tác về ảnh gốc', async () => {
@@ -68,7 +68,7 @@ test('áp preset; đổi preset / độ mạnh thì THAY THẾ chứ không ch�
   await waitIdle();
   assert.deepEqual(await P(), korean100, 'kéo độ mạnh: áp lại với độ mạnh mới');
 
-  await page.click('#quick-actions button[data-action="undo"]');
+  await page.click('#undo-btn');
   await waitIdle();
   assert.deepEqual(await P(), original, 'hoàn tác đúng số bước của preset');
 
@@ -88,7 +88,7 @@ test('có chỉnh sửa khác xen vào: preset mới được áp chồng lên, 
   await waitIdle();
   assert.notDeepEqual(await P(), beforeSecond);
   // Hoàn tác chỉ gỡ "Rực rỡ", vẫn giữ phần tăng sáng
-  await page.click('#quick-actions button[data-action="undo"]');
+  await page.click('#undo-btn');
   await waitIdle();
   assert.deepEqual(await P(), beforeSecond);
 });
