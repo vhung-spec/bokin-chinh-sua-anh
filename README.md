@@ -145,11 +145,31 @@ public/
   history.js                       hoàn tác / làm lại theo thao tác, xem ảnh gốc
   photopea-bridge.js               giao tiếp với Photopea
   tool-runner.js                   chạy tool, xem ảnh, hoàn tác, xuất file
+  api.js                           gọi máy chủ (đường dẫn tương đối, header X-Bokin, chờ việc lâu)
+scripts/
+  export-page.js    xuất giao diện + claude.json để gắn vào web app khác (npm run export:page)
 test/
   unit/             kiểm thử nhanh (không cần mạng)
   e2e/              kiểm thử trên Photopea thật bằng Playwright
 eval/               đánh giá với Claude API thật (npm run eval)
 ```
+
+### Gắn vào một web app khác
+
+Giao diện dùng được bên trong một web app khác, dưới một đường dẫn con (ví dụ `https://app.example.com/chinhanh/`) và sau
+lớp đăng nhập của web app đó, kể cả khi máy chủ của nó không phải Node:
+
+1. `npm run export:page -- <thư mục đích>` chép giao diện vào `<thư mục đích>/page/` và ghi `<thư mục đích>/claude.json`:
+   yêu cầu gửi Claude dựng sẵn (system prompt, 31 tool, cache, fallback), câu lệnh Generative Fill, bảng giá, giá trị mặc định.
+2. Máy chủ của web app phục vụ `page/` và trả lời `api/health`, `api/chat`, `api/keepalive`, `api/fill-instruction`,
+   `api/ai-edit` như `server/app.js`. Với `api/chat`: lấy `chat.with_ai` (hoặc `without_ai`) trong `claude.json`, thêm
+   `messages` của trang rồi gọi Claude bằng SDK chính thức (`betas` trong đó là header `anthropic-beta`).
+3. Trang luôn gọi đường dẫn **tương đối** và gửi header `X-Bokin: 1` (máy chủ nên từ chối POST thiếu header này).
+4. Việc lâu: máy chủ có thể trả `{"pending": "<mã>"}` thay cho kết quả; trang hỏi lại `api/result?id=<mã>` tới khi có kết
+   quả (hữu ích khi proxy cắt yêu cầu quá 100 giây). Lỗi trả `{"error": "…"}`, trang hiện nguyên văn.
+5. Khoá Claude và token Hugging Face chỉ nằm ở máy chủ; nên tính chi phí theo người (từ `usage`) và đặt hạn mức.
+
+Chạy lại bước 1 mỗi khi sửa giao diện, tool hay prompt.
 
 ### Thêm một tool mới
 

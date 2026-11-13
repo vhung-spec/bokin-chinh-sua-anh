@@ -1,7 +1,8 @@
 // Thực thi các lệnh tool mà Claude yêu cầu, ngay trong trình duyệt.
-import { TOOL_MAP } from '/shared/tools.js';
-import { validate } from '/shared/validate.js';
-import { RESULT_PREFIX, wrap, rectPoints, findUnsupportedSyntax } from '/shared/script-kit.js';
+import { TOOL_MAP } from './shared/tools.js';
+import { validate } from './shared/validate.js';
+import { RESULT_PREFIX, wrap, rectPoints, findUnsupportedSyntax } from './shared/script-kit.js';
+import { postJson } from './api.js';
 
 const MIME = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', psd: 'image/vnd.adobe.photoshop' };
 
@@ -524,13 +525,7 @@ app.executeAction(_c('setd'), __sd, DialogModes.NO);`;
 
 /** Gọi /api/ai-edit; trả về ArrayBuffer ảnh kết quả hoặc ném lỗi có thông báo tiếng Việt. */
 async function requestAiEdit(image, instruction) {
-  const res = await fetch('/api/ai-edit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image, mime_type: 'image/png', instruction }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Server trả lỗi HTTP ${res.status}`);
+  const data = await postJson('api/ai-edit', { image, mime_type: 'image/png', instruction });
   return base64ToBuffer(data.image);
 }
 

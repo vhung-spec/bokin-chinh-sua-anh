@@ -2,7 +2,8 @@
 //   - Màu nhanh: preset màu + độ mạnh, tự cân màu, ấm/lạnh hơn, tươi/nhạt hơn (miễn phí).
 //   - Tạo bằng AI (Generative Fill): khoanh vùng -> mô tả -> Tạo (chỉ trả tiền ảnh AI).
 // Mọi thao tác được ghi vào ActionLog để nút Hoàn tác chung gỡ được cả cụm.
-import { COLOR_PRESETS } from '/shared/color.js';
+import { COLOR_PRESETS } from './shared/color.js';
+import { postJson } from './api.js';
 
 const PRESET_NAMES = {
   cinematic: 'Điện ảnh',
@@ -268,13 +269,7 @@ export function setupFillPanel({ runner, bridge, log, isBusy, addNote, openImage
     try {
       const text = prompt.value.trim();
       setStatus(text ? 'Đang chuẩn bị câu lệnh…' : 'Đang xoá vật thể trong vùng chọn…');
-      const res = await fetch('/api/fill-instruction', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Server trả lỗi HTTP ${res.status}`);
+      const data = await postJson('api/fill-instruction', { prompt: text });
       const n = Number(variations.value) || 1;
       const what = n > 1 ? `${n} phương án` : 'ảnh';
       const tick = () => setStatus(`Đang tạo ${what} bằng AI… ${Math.round((Date.now() - started) / 1000)} giây (thường 10–60 giây).`);
@@ -317,10 +312,10 @@ export function setupFillPanel({ runner, bridge, log, isBusy, addNote, openImage
       if (!panel.hidden && !isBusy()) return refreshSelection();
       return null;
     },
-    setEnabled(value) {
+    setEnabled(value, hint) {
       enabled = value;
       off.hidden = value;
-      off.textContent = 'Chưa bật AI tạo ảnh: thêm HF_TOKEN (token Hugging Face) vào file .env rồi khởi động lại server. Vẫn khoanh vùng được để chỉnh màu riêng vùng đó.';
+      off.textContent = `${hint || 'Chưa bật AI tạo ảnh: thêm HF_TOKEN (token Hugging Face) vào file .env rồi khởi động lại server.'} Vẫn khoanh vùng được để chỉnh màu riêng vùng đó.`;
       updateRunButton();
     },
   };

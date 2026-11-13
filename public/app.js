@@ -5,10 +5,11 @@
 // -> lặp cho tới khi Claude trả lời xong (không còn tool_use).
 import { PhotopeaBridge } from './photopea-bridge.js';
 import { ToolRunner } from './tool-runner.js';
-import { toolLabel } from '/shared/tools.js';
+import { toolLabel } from './shared/tools.js';
 import { setupColorPanel, setupFillPanel } from './quick-panels.js';
 import { ActionLog } from './history.js';
-import { usageCost, totalCost, formatUsd } from '/shared/prices.js';
+import { usageCost, totalCost, formatUsd } from './shared/prices.js';
+import { getJson, postJson } from './api.js';
 
 const MAX_ROUNDS = 15; // số lượt gọi Claude tối đa cho một yêu cầu
 const PREVIEW_SIZE = 768; // cạnh dài ảnh xem trước gửi cho Claude (đủ để đánh giá màu, ít token hơn 1024)
@@ -103,16 +104,15 @@ bridge.ready.then(() => {
   refreshUi();
 });
 
-fetch('/api/health')
-  .then((r) => r.json())
+getJson('api/health')
   .then((h) => {
     if (!h.has_api_key) {
-      showNotice('Server chưa có ANTHROPIC_API_KEY. Tạo file .env (xem .env.example), điền key rồi khởi động lại server.');
+      showNotice(h.hints?.no_key || 'Server chưa có ANTHROPIC_API_KEY. Tạo file .env (xem .env.example), điền key rồi khởi động lại server.');
     }
     if (h.max_cost_per_request > 0) state.budget = h.max_cost_per_request;
     state.aiEnabled = Boolean(h.ai_edit?.enabled);
     if (h.ai_edit?.max_side) runner.aiMaxSide = h.ai_edit.max_side;
-    fillPanel.setEnabled(state.aiEnabled);
+    fillPanel.setEnabled(state.aiEnabled, h.hints?.no_ai);
     if (state.aiEnabled) {
       for (const text of ['Xoá vật thể trong vùng tôi vừa khoanh', 'Đổi nền thành bãi biển lúc hoàng hôn']) {
         const chip = make('button', '', text);
@@ -121,7 +121,7 @@ fetch('/api/health')
       }
     }
   })
-  .catch(() => showNotice('Không kết nối được server. Hãy chạy "npm start".'));
+  .catch((error) => showNotice(error?.status ? error.message : 'Không kết nối được máy chủ của Bokin (chạy trên máy thì gõ "npm start").'));
 
 // ───────────────────────────── Gửi tin nhắn ─────────────────────────────
 els.composer.addEventListener('submit', (e) => {
@@ -254,13 +254,7 @@ function scheduleKeepAlive(count = 0) {
     if (Date.now() - last.startedAt > Math.max(state.keepAliveMs + 30_000, 290_000)) return;
     const startedAt = Date.now();
     try {
-      const res = await fetch('/api/keepalive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: last.messages }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return;
+      const data = await postJson('api/keepalive', { messages: last.messages });
       if (data.usage) state.usage.push({ model: data.model, kind: 'keepalive', ...data.usage });
       updateCostTotal();
     } catch {
@@ -404,15 +398,7 @@ async function callClaude() {
   // Ghi lại đúng yêu cầu này: giữ cache ấm phải gửi lại y hệt (không được kết thúc bằng câu trả lời của Claude).
   state.lastRequest = { messages: state.messages.slice(), startedAt: Date.now() };
   try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: state.messages }),
-      signal: state.abort.signal,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Server trả lỗi HTTP ${res.status}`);
-    return data;
+    return await postJson('api/chat', { messages: state.messages }, { signal: state.abort.signal });
   } finally {
     thinking.remove();
     state.abort = null;
