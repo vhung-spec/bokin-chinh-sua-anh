@@ -53,6 +53,26 @@
         <div class="quick-status" id="color-status" aria-live="polite"></div>
       </details>
 
+      <details class="quick-panel" id="fill-panel">
+        <summary>Generative Fill <span class="free">chỉ trả tiền ảnh AI</span></summary>
+        <div class="fill-body">
+          <div class="fill-selection" id="fill-selection">Đang kiểm tra…</div>
+          <textarea id="fill-prompt" rows="2" placeholder="Muốn gì trong vùng chọn? Ví dụ: thêm một chậu cây xanh. Bỏ trống = xoá vật thể." aria-label="Yêu cầu Generative Fill"></textarea>
+          <div class="fill-row">
+            <label>Phương án
+              <select id="fill-variations">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+              </select>
+            </label>
+            <button type="button" class="btn primary" id="fill-run">Tạo</button>
+          </div>
+          <div class="fill-variants" id="fill-variants" hidden></div>
+        </div>
+        <div class="quick-status" id="fill-status" aria-live="polite"></div>
+      </details>
+
       <section class="chat" id="chat" aria-live="polite">
         <div class="empty" id="empty">
           <h2>Chỉnh ảnh bằng câu lệnh</h2>

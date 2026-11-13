@@ -195,3 +195,53 @@ test('prompt caching: tối đa 4 điểm cache, phần cố định giống h�
   assert.ok(breakpoints <= 4, `có ${breakpoints} điểm cache`);
   assert.equal(JSON.stringify(a.tools) + JSON.stringify(a.system), JSON.stringify(b.tools) + JSON.stringify(b.system));
 });
+
+test('buildFillRequest: Haiku, tắt suy nghĩ, effort thấp, không có fallbacks', async () => {
+  const { buildFillRequest, FILL_SYSTEM } = await import('../../server/chat.js');
+  const req = buildFillRequest('thêm con mèo');
+  assert.equal(req.model, 'claude-haiku-5-5');
+  assert.deepEqual(req.thinking, { type: 'disabled' });
+  assert.deepEqual(req.output_config, { effort: 'low' });
+  assert.equal(req.fallbacks, undefined, 'Haiku 5.5 không có server-side fallback');
+  assert.equal(req.system, FILL_SYSTEM);
+  assert.ok(req.max_tokens <= 2048);
+});
+
+test('HTTP: /api/fill-instruction dịch bằng model rẻ; để trống thì không gọi Claude', async () => {
+  const calls = [];
+  const fake = {
+    messages: {
+      create: async (params) => {
+        calls.push(params);
+        if (params.messages[0].content.includes('cấm')) return { content: [], stop_reason: 'refusal', model: params.model, usage: {} };
+        return { content: [{ type: 'text', text: 'Add a small cat in the middle of the image. Keep everything else unchanged.' }], stop_reason: 'end_turn', model: params.model, usage: { input_tokens: 120, output_tokens: 20 } };
+      },
+    },
+    beta: { messages: { create: async () => { throw new Error('không được gọi vòng lặp chat'); } } },
+  };
+  const server = createApp({ anthropic: fake }).listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const post = (prompt) => fetch(`http://127.0.0.1:${server.address().port}/api/fill-instruction`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
+  });
+  try {
+    let res = await post('thêm một con mèo nhỏ');
+    let out = await res.json();
+    assert.equal(res.status, 200);
+    assert.match(out.instruction, /^Add a small cat/);
+    assert.equal(out.translated, true);
+    assert.equal(calls.at(-1).model, 'claude-haiku-5-5');
+
+    res = await post('   ');
+    out = await res.json();
+    assert.equal(calls.length, 1, 'để trống: không gọi Claude');
+    assert.match(out.instruction, /^Remove the object in the middle/);
+    assert.equal(out.translated, false);
+
+    res = await post('nội dung bị cấm');
+    assert.equal(res.status, 422);
+    assert.match((await res.json()).error, /từ chối/);
+  } finally {
+    server.close();
+  }
+});

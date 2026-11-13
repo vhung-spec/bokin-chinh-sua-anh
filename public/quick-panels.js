@@ -175,3 +175,127 @@ export function setupColorPanel({ runner, bridge, isBusy, addNote }) {
     },
   };
 }
+
+/**
+ * Ô Generative Fill trực tiếp: khoanh vùng trong Photopea -> gõ yêu cầu (tiếng Việt) -> Tạo.
+ * Không chạy vòng lặp Claude: chỉ dịch câu lệnh bằng model rẻ (hoặc dùng câu lệnh "xoá" có sẵn khi để trống),
+ * rồi gửi thẳng cho AI tạo ảnh. Chi phí gần như chỉ còn tiền tạo ảnh.
+ */
+export function setupFillPanel({ runner, isBusy, addNote }) {
+  const $ = (id) => document.getElementById(id);
+  const panel = $('fill-panel');
+  const selectionInfo = $('fill-selection');
+  const prompt = $('fill-prompt');
+  const variations = $('fill-variations');
+  const run = $('fill-run');
+  const variants = $('fill-variants');
+  const status = $('fill-status');
+  let enabled = false;
+  let running = false;
+
+  const setStatus = (text, kind = '') => {
+    status.textContent = text;
+    status.className = `quick-status ${kind}`;
+  };
+
+  async function refreshSelection() {
+    if (!enabled) return null;
+    const sel = await runner._selectionBounds().catch(() => null);
+    selectionInfo.textContent = sel
+      ? `Vùng chọn: ${Math.round(sel.width)}×${Math.round(sel.height)} px`
+      : 'Chưa có vùng chọn: khoanh vùng trong Photopea (Lasso, Marquee, Magic Wand…) trước.';
+    selectionInfo.className = `fill-selection ${sel ? 'ok' : ''}`;
+    return sel;
+  }
+
+  function showVariants(layers) {
+    variants.replaceChildren();
+    variants.hidden = layers.length < 2;
+    layers.forEach((layer, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = `Phương án ${i + 1}`;
+      b.classList.toggle('active', i === 0);
+      b.addEventListener('click', async () => {
+        if (running || isBusy()) return;
+        running = true;
+        try {
+          for (const [j, name] of layers.entries()) {
+            const out = await runner.execute('layer_properties', { layer: name, visible: j === i });
+            if (out.isError) throw new Error(out.content);
+          }
+          for (const [j, el] of [...variants.children].entries()) el.classList.toggle('active', j === i);
+          setStatus(`Đang hiện phương án ${i + 1}.`, 'ok');
+          addNote('fill-variant', `(Ghi chú hệ thống: người dùng chọn hiện layer "${layer}", ẩn các phương án Generative Fill khác.)`);
+        } catch (error) {
+          setStatus(error.message, 'error');
+        } finally {
+          running = false;
+        }
+      });
+      variants.append(b);
+    });
+  }
+
+  async function generate() {
+    if (running) return;
+    if (!enabled) {
+      setStatus('Chưa bật AI tạo ảnh: thêm HF_TOKEN (token Hugging Face) vào file .env rồi khởi động lại server.', 'warn');
+      return;
+    }
+    if (isBusy()) {
+      setStatus('Bokin đang xử lý yêu cầu trong ô chat, đợi xong rồi thử lại.', 'warn');
+      return;
+    }
+    running = true;
+    run.disabled = true;
+    try {
+      if (!(await refreshSelection())) {
+        setStatus('Hãy khoanh vùng cần sửa trong Photopea trước.', 'error');
+        return;
+      }
+      const text = prompt.value.trim();
+      setStatus(text ? 'Đang chuẩn bị câu lệnh…' : 'Đang xoá vật thể trong vùng chọn…');
+      const res = await fetch('/api/fill-instruction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: text }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Server trả lỗi HTTP ${res.status}`);
+      const n = Number(variations.value) || 1;
+      setStatus(`Đang tạo ${n > 1 ? `${n} phương án` : 'ảnh'} bằng AI (thường 10–60 giây)…`);
+      const out = await runner.execute('ai_edit', { instruction: data.instruction, use_selection: true, variations: n });
+      if (out.isError) throw new Error(out.content);
+      const result = JSON.parse(out.content);
+      showVariants(result.layers);
+      setStatus(`Xong: ${result.layers.length} layer mới, ảnh gốc vẫn ở dưới. Câu lệnh gửi AI: "${data.instruction}"`, 'ok');
+      addNote('fill', `(Ghi chú hệ thống: người dùng đã dùng ô Generative Fill: "${text || 'xoá vật thể'}" trên vùng chọn; kết quả ở layer ${result.layers.map((l) => `"${l}"`).join(', ')}.)`);
+    } catch (error) {
+      setStatus(error?.message ?? String(error), 'error');
+    } finally {
+      running = false;
+      run.disabled = false;
+    }
+  }
+
+  run.addEventListener('click', generate);
+  prompt.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      generate();
+    }
+  });
+  prompt.addEventListener('focus', refreshSelection);
+  panel.addEventListener('toggle', () => { if (panel.open) refreshSelection(); });
+
+  return {
+    setEnabled(value) {
+      enabled = value;
+      panel.classList.toggle('disabled', !value);
+      selectionInfo.textContent = value
+        ? 'Khoanh vùng trong Photopea, gõ yêu cầu (bỏ trống = xoá vật thể) rồi bấm Tạo.'
+        : 'Chưa bật AI tạo ảnh: thêm HF_TOKEN (token Hugging Face) vào file .env rồi khởi động lại server.';
+    },
+  };
+}

@@ -12,10 +12,22 @@ const fakeEditor = async ({ buffer, mimeType, instruction }) => {
   return { buffer: solidPng(64, 48, [255, 0, 255]), mimeType: 'image/png' };
 };
 
+// "Claude" giả cho việc dịch câu lệnh Generative Fill (model rẻ)
+const translations = [];
+const fakeAnthropic = {
+  messages: {
+    create: async (params) => {
+      translations.push(params);
+      return { content: [{ type: 'text', text: 'Add a small cat in the middle of the image. Keep everything else unchanged.' }], stop_reason: 'end_turn', model: params.model, usage: {} };
+    },
+  },
+  beta: { messages: { create: async () => { throw new Error('không dùng vòng lặp chat trong file này'); } } },
+};
+
 let server, browser, page, pageErrors;
 
 before(async () => {
-  ({ server } = await startServer({ aiEditor: fakeEditor }));
+  ({ server } = await startServer({ aiEditor: fakeEditor, anthropic: fakeAnthropic }));
   ({ browser, page, pageErrors } = await openApp(`http://127.0.0.1:${server.address().port}`, { deviceScaleFactor: process.env.E2E_SCREENSHOT ? 2 : 1 }));
 });
 
@@ -148,6 +160,56 @@ test('bấm vào ô chat khi đang có vùng chọn: hiện gợi ý Generative 
   assert.equal(await page.locator('.msg').count(), 0, 'không gửi tin nhắn nào');
   if (process.env.E2E_SCREENSHOT) await page.screenshot({ path: process.env.E2E_SCREENSHOT, quality: 82 });
   json(await tool(page, 'select_area', { mode: 'none' }));
+});
+
+test('ô Generative Fill trực tiếp: dịch bằng model rẻ, 2 phương án, chuyển phương án', async () => {
+  await freshDoc(page, { width: 400, height: 300, background: '#FF0000' });
+  await page.click('#fill-panel summary');
+  await page.waitForSelector('#fill-selection:has-text("Chưa có vùng chọn")');
+
+  await page.click('#fill-run');
+  await page.waitForSelector('#fill-status:has-text("khoanh vùng")');
+
+  json(await tool(page, 'select_area', { mode: 'ellipse', x: 100, y: 75, width: 200, height: 150 }));
+  await page.fill('#fill-prompt', 'thêm một con mèo nhỏ');
+  await page.selectOption('#fill-variations', '2');
+  const before = calls.length;
+  await page.click('#fill-run');
+  await page.waitForSelector('#fill-status:has-text("Xong")', { timeout: 30_000 });
+
+  assert.equal(translations.length, 1);
+  assert.equal(translations[0].messages[0].content, 'thêm một con mèo nhỏ');
+  assert.equal(translations[0].model, 'claude-haiku-5-5');
+  assert.equal(calls.length, before + 2, 'gọi AI tạo ảnh 2 lần');
+  assert.match(calls.at(-1).instruction, /^Add a small cat/);
+  assert.deepEqual(await page.locator('#fill-variants button').allTextContents(), ['Phương án 1', 'Phương án 2']);
+
+  const visibility = async () => Object.fromEntries(json(await tool(page, 'get_document_info')).layers.map((l) => [l.name, l.visible]));
+  let v = await visibility();
+  assert.equal(v[Object.keys(v).find((n) => n.startsWith('AI 1/2'))], true, 'ban đầu phương án 1 hiện');
+  await page.click('#fill-variants button:has-text("Phương án 2")');
+  await page.waitForSelector('#fill-status:has-text("phương án 2")');
+  v = await visibility();
+  const names = Object.keys(v).filter((n) => n.startsWith('AI '));
+  assert.equal(names.length, 2);
+  assert.deepEqual(names.map((n) => v[n]).sort(), [false, true]);
+  assert.equal(v[names.find((n) => n.startsWith('AI 2/2'))], true, 'phương án 2 đang hiện');
+  assert.ok((await page.evaluate(() => window.bokin.state.pendingNotes.map((n) => n.key))).includes('fill'), 'ghi chú cho Claude');
+});
+
+test('ô Generative Fill: để trống = xoá vật thể, không gọi Claude', async () => {
+  await freshDoc(page, { width: 400, height: 300, background: '#FF0000' });
+  json(await tool(page, 'select_area', { mode: 'rect', x: 150, y: 100, width: 100, height: 100 }));
+  await page.fill('#fill-prompt', '');
+  await page.selectOption('#fill-variations', '1');
+  const t0 = translations.length;
+  await page.click('#fill-run');
+  await page.waitForSelector('#fill-status:has-text("Xong")', { timeout: 30_000 });
+  assert.equal(translations.length, t0, 'không dịch');
+  assert.match(calls.at(-1).instruction, /^Remove the object in the middle/);
+  assert.deepEqual(await pixel(page, 200, 150), MAGENTA);
+  assert.deepEqual(await pixel(page, 20, 20), RED);
+  assert.equal(await page.isVisible('#fill-variants'), false, '1 phương án: không hiện nút chuyển');
 });
 
 test('không có lỗi JavaScript trên trang', () => {

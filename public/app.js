@@ -6,7 +6,7 @@
 import { PhotopeaBridge } from './photopea-bridge.js';
 import { ToolRunner } from './tool-runner.js';
 import { toolLabel } from '/shared/tools.js';
-import { setupColorPanel } from './quick-panels.js';
+import { setupColorPanel, setupFillPanel } from './quick-panels.js';
 
 const MAX_ROUNDS = 30; // số lượt gọi Claude tối đa cho một yêu cầu
 
@@ -55,6 +55,8 @@ function addNote(key, text) {
 
 const colorPanel = setupColorPanel({ runner, bridge, isBusy: () => state.busy, addNote });
 rememberOpen(document.getElementById('color-panel'), 'bokin.colorPanelOpen');
+const fillPanel = setupFillPanel({ runner, isBusy: () => state.busy, addNote });
+rememberOpen(document.getElementById('fill-panel'), 'bokin.fillPanelOpen');
 
 // Cho phép kiểm thử tự động / gỡ lỗi từ console.
 window.bokin = { bridge, runner, state, executeTool: (name, input) => runner.execute(name, input) };
@@ -73,6 +75,7 @@ fetch('/api/health')
       showNotice('Server chưa có ANTHROPIC_API_KEY. Tạo file .env (xem .env.example), điền key rồi khởi động lại server.');
     }
     state.aiEnabled = Boolean(h.ai_edit?.enabled);
+    fillPanel.setEnabled(state.aiEnabled);
     if (state.aiEnabled) {
       for (const text of ['Xoá vật thể trong vùng tôi vừa khoanh', 'Đổi nền thành bãi biển lúc hoàng hôn']) {
         const chip = make('button', '', text);

@@ -1,7 +1,10 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config, runTurn, checkMessages, describeError, getClient, hasAnthropicCredentials, MISSING_KEY_MESSAGE } from './chat.js';
+import {
+  config, runTurn, checkMessages, describeError, getClient, hasAnthropicCredentials, MISSING_KEY_MESSAGE,
+  translateFillPrompt, RefusalError, REMOVE_INSTRUCTION,
+} from './chat.js';
 import { aiConfig, aiEditEnabled, editWithHuggingFace, checkAiEditBody, describeAiError } from './ai-edit.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,6 +46,24 @@ export function createApp({ anthropic, aiEditor } = {}) {
     } catch (error) {
       const { status, message } = describeError(error);
       console.error(`[chat] ${status}: ${error?.message ?? error}`);
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Generative Fill trực tiếp: dịch yêu cầu tiếng Việt sang câu lệnh tiếng Anh bằng model rẻ (Haiku).
+  // Để trống = xoá vật thể, dùng câu lệnh cố định, không gọi Claude.
+  app.post('/api/fill-instruction', async (req, res) => {
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    if (!prompt) return res.json({ instruction: REMOVE_INSTRUCTION, translated: false });
+    if (prompt.length > 1000) return res.status(400).json({ error: 'Yêu cầu quá dài.' });
+    if (!anthropic && !hasAnthropicCredentials()) return res.status(500).json({ error: MISSING_KEY_MESSAGE });
+    try {
+      const out = await translateFillPrompt(prompt, anthropic ?? getClient());
+      res.json({ ...out, translated: true });
+    } catch (error) {
+      if (error instanceof RefusalError) return res.status(422).json({ error: error.message });
+      const { status, message } = describeError(error);
+      console.error(`[fill-instruction] ${status}: ${error?.message ?? error}`);
       res.status(status).json({ error: message });
     }
   });

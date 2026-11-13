@@ -19,6 +19,8 @@ export const config = {
   // Đặt CLAUDE_FALLBACKS=off để tắt.
   fallbacks: (process.env.CLAUDE_FALLBACKS || 'default').toLowerCase() !== 'off',
   maxTokens: 16000,
+  // Model rẻ cho việc nhỏ (dịch câu lệnh Generative Fill sang tiếng Anh).
+  fastModel: process.env.CLAUDE_FAST_MODEL || 'claude-haiku-5-5',
 };
 
 // Hai bộ cấu hình cố định (có / không có ai_edit) để prompt caching không bị phá.
@@ -52,6 +54,43 @@ export function buildRequest(messages, { aiEdit = false } = {}) {
     params.fallbacks = 'default';
   }
   return params;
+}
+
+// ───────────────────────────── Dịch câu lệnh Generative Fill ─────────────────────────────
+
+export const FILL_SYSTEM = `You turn a user's request for a generative-fill edit (usually written in Vietnamese, possibly without diacritics) into ONE instruction for an instruction-following image editing model (Qwen-Image-Edit).
+- The model receives a crop centered on the area the user selected, so refer to the target as being "in the middle of the image".
+- Removal requests: say what to remove (or "the object in the middle" if unspecified) and to fill the area naturally so it matches the surrounding background.
+- Additions or replacements: describe the new content concretely (subject, color, size, material, style), placed in the middle of the image, matching the lighting, perspective and style of the photo.
+- End with "Keep everything else unchanged."
+- Write in English, at most two sentences. Output only the instruction, no quotes or explanations.`;
+
+/** Câu lệnh cố định khi người dùng để trống ô nhập: xoá vật thể trong vùng chọn (không cần gọi Claude). */
+export const REMOVE_INSTRUCTION = 'Remove the object in the middle of the image and fill the area naturally so it matches the surrounding background. Keep everything else unchanged.';
+
+export function buildFillRequest(prompt) {
+  const params = {
+    model: config.fastModel,
+    max_tokens: 1024,
+    system: FILL_SYSTEM,
+    output_config: { effort: 'low' },
+    messages: [{ role: 'user', content: prompt }],
+  };
+  // Haiku 5.5 cho phép tắt suy nghĩ (ở effort high trở xuống): việc dịch ngắn không cần suy nghĩ.
+  // Opus/Sonnet 5.5 không nhận {type:'disabled'} nên chỉ tắt với Haiku.
+  if (config.fastModel.startsWith('claude-haiku')) params.thinking = { type: 'disabled' };
+  return params;
+}
+
+export class RefusalError extends Error {}
+
+/** Dịch yêu cầu Generative Fill sang câu lệnh tiếng Anh cho mô hình ảnh. */
+export async function translateFillPrompt(prompt, anthropic = getClient()) {
+  const response = await anthropic.messages.create(buildFillRequest(prompt));
+  if (response.stop_reason === 'refusal') throw new RefusalError('Yêu cầu này bị bộ lọc an toàn từ chối. Hãy diễn đạt lại.');
+  const instruction = response.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim();
+  if (!instruction) throw new Error('Không dịch được câu lệnh.');
+  return { instruction, model: response.model, usage: response.usage };
 }
 
 /**
