@@ -37,6 +37,8 @@ const state = {
   abort: null,
   /** ghi chú hệ thống gửi kèm tin nhắn tiếp theo (ví dụ: người dùng vừa mở ảnh mới) */
   pendingNotes: [],
+  /** token đã dùng cho mỗi lần gọi Claude (để theo dõi chi phí) */
+  usage: [],
 };
 
 const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: 'vi' } } });
@@ -57,6 +59,11 @@ fetch('/api/health')
   .then((h) => {
     if (!h.has_api_key) {
       showNotice('Server chưa có ANTHROPIC_API_KEY. Tạo file .env (xem .env.example), điền key rồi khởi động lại server.');
+    }
+    if (h.ai_edit?.enabled) {
+      const chip = make('button', '', 'Xoá vật thể thừa trong ảnh bằng AI');
+      chip.type = 'button';
+      $('suggestions').append(chip);
     }
   })
   .catch(() => showNotice('Không kết nối được server. Hãy chạy "npm start".'));
@@ -119,6 +126,7 @@ async function agentLoop() {
       return;
     }
     const data = await callClaude();
+    if (data.usage) state.usage.push({ model: data.model, ...data.usage });
 
     if (data.stop_reason === 'refusal') {
       // Bỏ tin nhắn bị từ chối khỏi lịch sử (nếu là tin nhắn chữ của người dùng) để không ảnh hưởng các lượt sau.
@@ -354,6 +362,7 @@ function finishStep(el, outcome) {
 
 function summarizeInput(name, input) {
   if (name === 'run_script') return input.purpose ?? '';
+  if (name === 'ai_edit') return `(có thể mất tới 1 phút) ${input.instruction}`;
   return Object.entries(input)
     .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
     .join(', ')

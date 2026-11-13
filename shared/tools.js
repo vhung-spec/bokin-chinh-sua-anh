@@ -896,6 +896,42 @@ __ok({ layer: layer.name, bounds: __bounds(layer) });`);
     },
   },
 
+  // ───────────────────────────── AI tạo ảnh ─────────────────────────────
+  {
+    name: 'ai_edit',
+    label: 'Chỉnh sửa bằng AI',
+    kind: 'client',
+    description:
+      'Generative AI edit with an instruction-following image model: change the CONTENT of the photo — remove an object ' +
+      'or person, replace the background, add an object, change one object\'s color or clothing, restyle. Slow (10-60 s) ' +
+      'and costs money per call: use only for content changes the other tools cannot do. Write `instruction` in ENGLISH, ' +
+      'specific and self-contained, describing the desired result (e.g. "Remove the red ball and fill the area with ' +
+      'matching grass and sky, keep everything else unchanged"). The result is added as a NEW layer on top (the original ' +
+      'stays underneath). For local edits pass `region` (document pixels, covering the object with a little room): only ' +
+      'that part plus some surrounding context is sent, and only the region is replaced (soft edge = feather), so the ' +
+      'rest keeps full quality. Without region the whole visible image is sent (downscaled to at most 1536 px). ' +
+      'Check the result with view_image; if it is bad, delete the AI layer with manage_layer.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        instruction: { type: 'string', description: 'Chỉ dẫn bằng tiếng Anh, mô tả kết quả mong muốn.' },
+        region: {
+          type: 'object',
+          description: 'Vùng cần sửa (pixel tài liệu). Bỏ trống = sửa toàn ảnh.',
+          properties: {
+            x: { type: 'number' }, y: { type: 'number' },
+            width: { type: 'number', minimum: 1 }, height: { type: 'number', minimum: 1 },
+          },
+          required: ['x', 'y', 'width', 'height'],
+          additionalProperties: false,
+        },
+        feather: { type: 'number', minimum: 0, maximum: 200, description: 'Làm mềm mép vùng thay thế (px), mặc định 12.' },
+      },
+      required: ['instruction'],
+      additionalProperties: false,
+    },
+  },
+
   // ───────────────────────────── Script tự do ─────────────────────────────
   {
     name: 'run_script',

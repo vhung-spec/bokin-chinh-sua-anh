@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { buildRequest, prepareForEcho, checkMessages, runTurn, describeError, config } from '../../server/chat.js';
 import { createApp } from '../../server/app.js';
 import Anthropic from '@anthropic-ai/sdk';
+import { InferenceClientProviderApiError } from '@huggingface/inference';
+import { checkAiEditBody, describeAiError } from '../../server/ai-edit.js';
 
 const userMsg = [{ role: 'user', content: 'Làm sáng ảnh' }];
 
@@ -91,5 +93,71 @@ test('HTTP: /api/health và /api/chat (client giả)', async () => {
     assert.equal(shared.status, 200);
   } finally {
     server.close();
+  }
+});
+
+test('buildRequest: chỉ có ai_edit khi server bật AI, system prompt khớp', () => {
+  const off = buildRequest(userMsg);
+  assert.ok(!off.tools.some((t) => t.name === 'ai_edit'));
+  assert.match(off.system, /not enabled on this server/);
+  const on = buildRequest(userMsg, { aiEdit: true });
+  assert.ok(on.tools.some((t) => t.name === 'ai_edit'));
+  assert.match(on.system, /use ai_edit/);
+  assert.ok(!on.system.includes('{{'), 'đã thay hết placeholder');
+  // Cùng cấu hình -> cùng đối tượng (giữ prompt cache ổn định)
+  assert.equal(buildRequest(userMsg, { aiEdit: true }).system, on.system);
+});
+
+test('checkAiEditBody', () => {
+  const good = { instruction: 'Remove the ball', image: 'A'.repeat(200), mime_type: 'image/png' };
+  assert.equal(checkAiEditBody(good), null);
+  assert.ok(checkAiEditBody({ ...good, instruction: ' ' }));
+  assert.ok(checkAiEditBody({ ...good, image: '' }));
+  assert.ok(checkAiEditBody({ ...good, mime_type: 'image/gif' }));
+  assert.ok(checkAiEditBody(null));
+});
+
+test('describeAiError: lỗi Hugging Face -> thông báo tiếng Việt', () => {
+  const req = { url: 'https://router.huggingface.co/x', method: 'POST', headers: {} };
+  const e402 = new InferenceClientProviderApiError('payment', req, { requestId: 'r', status: 402, body: '' });
+  assert.match(describeAiError(e402).message, /credit/);
+  const e401 = new InferenceClientProviderApiError('auth', req, { requestId: 'r', status: 401, body: '' });
+  assert.match(describeAiError(e401).message, /HF_TOKEN/);
+  assert.equal(describeAiError(new Error('x')).status, 500);
+});
+
+test('HTTP: /api/ai-edit tắt (501), sai body (400), chạy với editor giả (200)', async () => {
+  const post = (base, body) => fetch(`${base}/api/ai-edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const body = { instruction: 'Remove the ball', image: Buffer.from('x'.repeat(200)).toString('base64'), mime_type: 'image/png' };
+
+  const saved = process.env.HF_TOKEN;
+  delete process.env.HF_TOKEN;
+  const off = createApp().listen(0, '127.0.0.1');
+  await new Promise((r) => off.once('listening', r));
+  try {
+    const res = await post(`http://127.0.0.1:${off.address().port}`, body);
+    assert.equal(res.status, 501);
+    assert.match((await res.json()).error, /HF_TOKEN/);
+  } finally {
+    off.close();
+    if (saved !== undefined) process.env.HF_TOKEN = saved;
+  }
+
+  let seen;
+  const on = createApp({ aiEditor: async (input) => { seen = input; return { buffer: Buffer.from('kết quả'), mimeType: 'image/png' }; } }).listen(0, '127.0.0.1');
+  await new Promise((r) => on.once('listening', r));
+  const base = `http://127.0.0.1:${on.address().port}`;
+  try {
+    assert.equal((await post(base, { ...body, instruction: '' })).status, 400);
+    const res = await post(base, body);
+    assert.equal(res.status, 200);
+    const out = await res.json();
+    assert.equal(Buffer.from(out.image, 'base64').toString(), 'kết quả');
+    assert.equal(seen.instruction, 'Remove the ball');
+    assert.equal(seen.buffer.length, 200);
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.equal(health.ai_edit.enabled, true);
+  } finally {
+    on.close();
   }
 });

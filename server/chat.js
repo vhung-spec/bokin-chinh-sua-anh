@@ -5,7 +5,7 @@
 // một lần cho mỗi request, rồi trả nội dung về trình duyệt.
 
 import Anthropic from '@anthropic-ai/sdk';
-import { SYSTEM_PROMPT } from './system-prompt.js';
+import { systemPrompt } from './system-prompt.js';
 import { toolDefinitions } from '../shared/tools.js';
 
 export const config = {
@@ -18,15 +18,23 @@ export const config = {
   maxTokens: 16000,
 };
 
-const TOOLS = toolDefinitions();
+// Hai bộ cấu hình cố định (có / không có ai_edit) để prompt caching không bị phá.
+const VARIANTS = {
+  withAi: { system: systemPrompt({ aiEdit: true }), tools: toolDefinitions() },
+  withoutAi: { system: systemPrompt({ aiEdit: false }), tools: toolDefinitions().filter((t) => t.name !== 'ai_edit') },
+};
 
-/** Tạo tham số request gửi Claude (tách riêng để dễ kiểm thử). */
-export function buildRequest(messages) {
+/**
+ * Tạo tham số request gửi Claude (tách riêng để dễ kiểm thử).
+ * @param {{ aiEdit?: boolean }} [options] - server có bật chỉnh sửa bằng AI tạo ảnh không
+ */
+export function buildRequest(messages, { aiEdit = false } = {}) {
+  const variant = aiEdit ? VARIANTS.withAi : VARIANTS.withoutAi;
   const params = {
     model: config.model,
     max_tokens: config.maxTokens,
-    system: SYSTEM_PROMPT,
-    tools: TOOLS,
+    system: variant.system,
+    tools: variant.tools,
     messages,
     output_config: { effort: config.effort },
     // Tự động cache tiền tố (system + tools + lịch sử) giữa các lượt.
@@ -71,8 +79,8 @@ export function getClient() {
 }
 
 /** Gọi Claude một lần. Trả về dữ liệu gọn cho trình duyệt. */
-export async function runTurn(messages, anthropic = getClient()) {
-  const response = await anthropic.beta.messages.create(buildRequest(messages));
+export async function runTurn(messages, anthropic = getClient(), { aiEdit = false } = {}) {
+  const response = await anthropic.beta.messages.create(buildRequest(messages, { aiEdit }));
   return {
     content: prepareForEcho(response.content),
     stop_reason: response.stop_reason,

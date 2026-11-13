@@ -1,6 +1,7 @@
 // Tiện ích cho kiểm thử end-to-end: chạy server, mở trình duyệt thật, chờ Photopea sẵn sàng.
 // Cần mạng tới www.photopea.com. Nếu máy dùng proxy (biến HTTPS_PROXY), Chromium sẽ đi qua proxy đó.
 import { chromium } from 'playwright';
+import zlib from 'node:zlib';
 import { createApp } from '../../server/app.js';
 
 export async function startServer(options) {
@@ -71,4 +72,35 @@ export function pixel(page, x, y) {
 export async function freshDoc(page, { width = 300, height = 200, background = '#808080' } = {}) {
   await page.evaluate(() => window.bokin.bridge.exec('while (app.documents.length) { app.activeDocument.close(2); }'));
   return json(await tool(page, 'create_document', { width, height, background }));
+}
+
+/** Tạo ảnh PNG một màu (dùng cho dịch vụ AI giả lập trong kiểm thử). */
+export function solidPng(width, height, [r, g, b]) {
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(td) >>> 0);
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // RGB
+  const row = Buffer.alloc(1 + width * 3);
+  for (let x = 0; x < width; x++) row.set([r, g, b], 1 + x * 3);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/** Đọc kích thước ảnh PNG từ header. */
+export function pngSize(buffer) {
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }

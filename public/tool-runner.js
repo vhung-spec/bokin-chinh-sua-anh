@@ -1,7 +1,7 @@
 // Thực thi các lệnh tool mà Claude yêu cầu, ngay trong trình duyệt.
 import { TOOL_MAP } from '/shared/tools.js';
 import { validate } from '/shared/validate.js';
-import { RESULT_PREFIX, wrap, findUnsupportedSyntax } from '/shared/script-kit.js';
+import { RESULT_PREFIX, wrap, rectPoints, findUnsupportedSyntax } from '/shared/script-kit.js';
 
 const MIME = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', psd: 'image/vnd.adobe.photoshop' };
 
@@ -33,6 +33,7 @@ export class ToolRunner {
         case 'redo': return await this._history(-(input.steps ?? 1));
         case 'export_image': return await this._export(input);
         case 'run_script': return await this._runRawScript(input.script);
+        case 'ai_edit': return await this._aiEdit(input);
         default: return fail(`Công cụ "${name}" chưa được cài đặt.`);
       }
     } catch (error) {
@@ -156,6 +157,107 @@ __ok({ history_steps: hs.length, now_at_step: idx + 1 });`));
     };
   }
 
+  /**
+   * Chỉnh sửa bằng AI: gửi ảnh (hoặc vùng + ngữ cảnh xung quanh) lên server -> mô hình AI -> đặt kết quả
+   * thành một layer mới đúng vị trí; nếu có region thì thêm mask để chỉ thay vùng đó.
+   */
+  async _aiEdit({ instruction, region, feather = 12 }) {
+    const exported = await this.bridge.exportDocument('png');
+    if (!exported) return fail('Chưa có ảnh nào đang mở.');
+    const bitmap = await createImageBitmap(new Blob([exported.buffer], { type: 'image/png' }));
+    const W = bitmap.width;
+    const H = bitmap.height;
+
+    // Vùng gửi cho AI: toàn ảnh, hoặc vùng cần sửa + lề ngữ cảnh 50% mỗi phía.
+    let area = { x: 0, y: 0, width: W, height: H };
+    let mask = null;
+    if (region) {
+      const x0 = clamp(Math.round(region.x), 0, W - 1);
+      const y0 = clamp(Math.round(region.y), 0, H - 1);
+      const x1 = clamp(Math.round(region.x + region.width), x0 + 1, W);
+      const y1 = clamp(Math.round(region.y + region.height), y0 + 1, H);
+      mask = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+      const margin = Math.round(Math.max(mask.width, mask.height) * 0.5);
+      const ax0 = Math.max(0, x0 - margin);
+      const ay0 = Math.max(0, y0 - margin);
+      area = { x: ax0, y: ay0, width: Math.min(W, x1 + margin) - ax0, height: Math.min(H, y1 + margin) - ay0 };
+    }
+    const scale = Math.min(1, 1536 / Math.max(area.width, area.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(area.width * scale));
+    canvas.height = Math.max(1, Math.round(area.height * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, area.x, area.y, area.width, area.height, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const sent = canvas.toDataURL('image/png');
+
+    const res = await fetch('/api/ai-edit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: sent.slice(sent.indexOf(',') + 1), mime_type: 'image/png', instruction }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return fail(data.error || `Server trả lỗi HTTP ${res.status}`);
+
+    const layerName = `AI: ${instruction}`.slice(0, 60);
+    const placed = await this._placeImageAsLayer(base64ToBuffer(data.image), area, layerName, mask, feather);
+    this.undoDepth = 0;
+    if (placed.isError) return placed;
+    return ok(JSON.stringify({
+      ...JSON.parse(placed.content),
+      sent_area: area,
+      note: 'Kết quả AI nằm ở layer mới phía trên; ảnh gốc vẫn ở bên dưới. Hãy kiểm tra bằng view_image.',
+    }));
+  }
+
+  /** Mở ảnh như tài liệu tạm, chép layer sang tài liệu đang làm việc, co giãn vào `area`, thêm mask nếu có. */
+  async _placeImageAsLayer(buffer, area, layerName, mask, feather) {
+    const token = `__bokin_${Math.random().toString(36).slice(2)}`;
+    // Đánh dấu tài liệu đích bằng tên tạm (đổi tên không tạo bước lịch sử).
+    const mark = await this.bridge.exec(`app.echoToOE(app.activeDocument.name); app.activeDocument.name = ${JSON.stringify(token)};`);
+    if (!mark.completed || !mark.echoes.length) return fail('Không đánh dấu được tài liệu đích.');
+    const originalName = mark.echoes[0];
+    const opened = await this.bridge.exec(buffer);
+    if (!opened.completed) {
+      await this.bridge.exec(`app.activeDocument.name = ${JSON.stringify(originalName)};`);
+      return fail('Photopea không mở được ảnh do AI trả về.');
+    }
+    const maskScript = mask
+      ? `dst.selection.select(${rectPoints(mask.x, mask.y, mask.width, mask.height)}, SelectionType.REPLACE, ${Number(feather) || 0});
+var md = new ActionDescriptor(); var mr = new ActionReference(); mr.putEnumerated(_c('Chnl'), _c('Chnl'), _c('Msk '));
+md.putClass(_c('Nw  '), _c('Chnl')); md.putReference(_c('At  '), mr); md.putEnumerated(_c('Usng'), _c('UsrM'), _c('RvlS'));
+app.executeAction(_c('Mk  '), md, DialogModes.NO);
+dst.selection.deselect();`
+      : '';
+    const result = await this._runWrapped(wrap(`
+var src = app.activeDocument;
+var dst = null;
+for (var i = 0; i < app.documents.length; i++) { if (app.documents[i].name === ${JSON.stringify(token)}) { dst = app.documents[i]; } }
+if (!dst) { __fail('Không tìm thấy tài liệu đích.'); return; }
+// Layer chép sang được đặt ngay trên layer đang chọn của tài liệu đích, mang tên mặc định
+// ("Layer 1"...) và trở thành layer đang chọn, nên lấy nó qua activeLayer.
+src.activeLayer.duplicate(dst);
+src.close(2);
+app.activeDocument = dst;
+dst.name = ${JSON.stringify(originalName)};
+var L = dst.activeLayer;
+if (!L) { __fail('Không chép được layer kết quả.'); return; }
+if (dst.layers[0].name !== L.name) { L.move(dst.layers[0], ElementPlacement.PLACEBEFORE); }
+var b = __bounds(L);
+L.resize(${area.width} / b.width * 100, ${area.height} / b.height * 100, AnchorPosition.TOPLEFT);
+b = __bounds(L);
+L.translate(${area.x} - b.x, ${area.y} - b.y);
+L.name = ${JSON.stringify(layerName)};
+${maskScript}
+__ok({ layer: L.name, bounds: __bounds(L), masked_to: ${mask ? JSON.stringify(mask) : 'null'} });`, { needsDocument: false }));
+    if (result.isError) {
+      // Dọn dẹp: trả lại tên tài liệu gốc nếu còn mang tên tạm.
+      await this.bridge.exec(`for (var i = 0; i < app.documents.length; i++) { if (app.documents[i].name === ${JSON.stringify(token)}) { app.documents[i].name = ${JSON.stringify(originalName)}; } }`);
+    }
+    return result;
+  }
+
   async _runRawScript(script) {
     const problems = findUnsupportedSyntax(script);
     if (problems.length) {
@@ -169,6 +271,17 @@ __ok({ history_steps: hs.length, now_at_step: idx + 1 });`));
     }
     return ok(r.echoes.length ? r.echoes.join('\n') : 'Script chạy xong (không có output).');
   }
+}
+
+function clamp(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+function base64ToBuffer(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
 }
 
 /** Tên file an toàn cho mọi trình duyệt/hệ điều hành: bỏ dấu tiếng Việt, thay ký tự lạ bằng "-". */

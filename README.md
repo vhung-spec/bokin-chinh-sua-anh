@@ -15,6 +15,7 @@ Bokin là công cụ web giúp chỉnh sửa ảnh bằng câu lệnh tiếng Vi
 | Vùng chọn | "làm tối nửa trái", "tô đen vùng này", "xoá vùng góc dưới" |
 | Chữ & hình | "thêm chữ *Khai trương* font Montserrat đậm", "đặt chữ ở góc dưới phải", "vẽ thanh nền đen mờ phía sau chữ" |
 | Layer | nhân đôi, xoá, đổi tên, đổi thứ tự, độ mờ, chế độ hoà trộn, gộp layer |
+| AI tạo ảnh (tuỳ chọn) | "xoá người phía sau", "đổi nền thành bãi biển", "thêm kính râm cho người này", "đổi áo sang màu đỏ" |
 | Khác | tạo ảnh mới theo kích thước (bìa Facebook, story…), hoàn tác/làm lại, xuất PNG/JPG/WEBP/PSD |
 
 Claude **tự xem ảnh** (trước và sau khi sửa) để chọn vị trí đặt chữ, kiểm tra độ sáng, rồi tự hoàn tác nếu kết quả chưa ổn.
@@ -54,6 +55,20 @@ Trong lúc phát triển, dùng `npm run dev` để server tự khởi động l
 | `CLAUDE_EFFORT` | `medium` | Mức suy nghĩ: `low` nhanh/rẻ hơn, `high` cẩn thận hơn |
 | `CLAUDE_FALLBACKS` | `default` | Khi một yêu cầu bị bộ lọc an toàn từ chối, API tự chạy lại trên model dự phòng. `off` để tắt. |
 | `PORT` / `HOST` | `3000` / `127.0.0.1` | Địa chỉ server. Giữ `127.0.0.1` nếu chưa có đăng nhập, vì server dùng API key của bạn. |
+| `HF_TOKEN` | (trống = tắt) | Token Hugging Face để bật chỉnh sửa bằng AI tạo ảnh |
+| `AI_EDIT_MODEL` | `Qwen/Qwen-Image-Edit-2511` | Mô hình chỉnh ảnh theo chỉ dẫn |
+| `AI_EDIT_PROVIDER` | `auto` | Nhà cung cấp chạy mô hình: `auto`, `fal-ai`, `wavespeed` |
+
+### Bật chỉnh sửa bằng AI tạo ảnh (tuỳ chọn)
+
+Các yêu cầu thay đổi **nội dung** ảnh (xoá vật thể, đổi nền, thêm chi tiết…) dùng mô hình **Qwen-Image-Edit-2511** (giấy phép Apache-2.0, được dùng thương mại), chạy qua [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers). Mô hình do fal.ai hoặc WaveSpeed chạy, Hugging Face định tuyến.
+
+1. Tạo token tại [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) với quyền **Make calls to Inference Providers**.
+2. Thêm `HF_TOKEN=...` vào `.env` rồi khởi động lại server.
+
+Cách hoạt động: Bokin gửi ảnh (hoặc chỉ vùng cần sửa kèm một phần xung quanh) cho mô hình, rồi đặt kết quả thành **layer mới** phía trên. Ảnh gốc vẫn còn bên dưới; khi sửa theo vùng, Bokin thêm mask để chỉ thay đúng vùng đó. Mỗi lần sửa mất khoảng 10–60 giây và tính phí vào tài khoản Hugging Face (thường vài cent mỗi ảnh; xem bảng giá của nhà cung cấp). Mô hình không tạo được nền trong suốt; muốn tách nền trong suốt thì dùng *Remove BG / Magic Cut* có sẵn trong Photopea.
+
+Khi chưa có `HF_TOKEN`, công cụ này được ẩn khỏi Claude và Claude sẽ nói rõ là tính năng chưa bật.
 
 ## Cách hoạt động
 
@@ -72,7 +87,7 @@ Trong lúc phát triển, dùng `npm run dev` để server tự khởi động l
 ```
 
 1. Bạn gõ yêu cầu; trình duyệt gửi lịch sử hội thoại lên server.
-2. Server gọi Claude kèm danh sách **27 tool** (định nghĩa trong `shared/tools.js`).
+2. Server gọi Claude kèm danh sách **28 tool** (định nghĩa trong `shared/tools.js`).
 3. Claude trả về các lệnh `tool_use`. Trình duyệt chạy từng lệnh bằng cách gửi **script** vào Photopea qua Live Messaging API (`postMessage`), rồi gửi kết quả (`tool_result`, có thể kèm ảnh xem trước) lên lại.
 4. Lặp lại cho tới khi Claude trả lời xong.
 
@@ -85,9 +100,10 @@ server/
   index.js          khởi động server
   app.js            Express: phục vụ giao diện, /api/health, /api/chat
   chat.js           gọi Claude API (model, effort, prompt caching, fallback), xử lý lỗi
+  ai-edit.js        chỉnh sửa bằng AI tạo ảnh qua Hugging Face (POST /api/ai-edit)
   system-prompt.js  hướng dẫn cho Claude
 shared/             dùng chung cho server và trình duyệt
-  tools.js          định nghĩa 27 tool + hàm sinh script Photopea cho từng tool
+  tools.js          định nghĩa 28 tool + hàm sinh script Photopea cho từng tool
   script-kit.js     hàm phụ trợ sinh script an toàn (thoát chuỗi, kiểm tra cú pháp)
   validate.js       kiểm tra tham số tool theo JSON Schema
 public/
@@ -97,6 +113,7 @@ public/
 test/
   unit/             kiểm thử nhanh (không cần mạng)
   e2e/              kiểm thử trên Photopea thật bằng Playwright
+eval/               đánh giá với Claude API thật (npm run eval)
 ```
 
 ### Thêm một tool mới
@@ -137,7 +154,7 @@ Photopea chạy script bằng **trình thông dịch riêng**, không phải Jav
 npm test
 ```
 
-Kiểm thử end-to-end mở Chromium thật, tải Photopea từ internet, chạy từng tool rồi **đo pixel** để chắc chắn ảnh thực sự thay đổi. Kiểm thử này cũng chạy cả vòng lặp chat với một Claude API giả lập, nên không tốn tiền API. Lần đầu cần cài trình duyệt cho Playwright:
+Kiểm thử end-to-end mở Chromium thật, tải Photopea từ internet, chạy từng tool rồi **đo pixel** để chắc chắn ảnh thực sự thay đổi. Kiểm thử này cũng chạy cả vòng lặp chat với một Claude API giả lập, và tool AI với một dịch vụ AI giả lập, nên không tốn tiền. Lần đầu cần cài trình duyệt cho Playwright:
 
 ```bash
 npx playwright install chromium
@@ -147,11 +164,27 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
+### Đánh giá với Claude API thật
+
+`npm run eval` chạy 12 câu lệnh tiếng Việt (làm sáng, đen trắng, cắt vuông giữ chủ thể, thêm chữ, đổi màu chữ, hoàn tác, thu nhỏ, thêm viền, làm mờ nền, tạo ảnh bìa, tăng tương phản, xoá vật thể bằng AI) qua **giao diện thật, Photopea thật và Claude API thật** trên một ảnh mẫu. Mỗi tình huống được chấm tự động bằng cách đo pixel và layer, rồi ghi số lượt gọi, token và chi phí ước tính vào `eval/out/<thời gian>/report.md`, kèm ảnh kết quả.
+
+```bash
+npm run eval
+```
+
+Chạy một phần, ví dụ chỉ các tình huống có "chu" trong tên:
+
+```bash
+npm run eval -- chu
+```
+
+Lưu ý: lệnh này **tốn tiền API thật**, ước tính 1–3 USD cho toàn bộ với `claude-opus-5-5`. Tình huống xoá vật thể bằng AI chỉ chạy khi có `HF_TOKEN`.
+
 ## Chi phí và giới hạn
 
 - Mỗi lượt gửi lại toàn bộ lịch sử hội thoại, kể cả ảnh xem trước (khoảng 1–1,5 nghìn token mỗi ảnh). Prompt caching giúp giảm chi phí phần lặp lại. Khi chuyển sang ảnh khác hoặc việc khác, bấm **Trò chuyện mới** để cuộc trò chuyện gọn và rẻ.
 - Hoàn tác/làm lại của Bokin dựa trên lịch sử Photopea. Nếu bạn tự bấm Ctrl+Z trong Photopea, lần hoàn tác tiếp theo của Bokin có thể lệch bước.
-- Chưa có các tính năng AI tạo ảnh (xoá vật thể, đổi nền, xoá phông). Claude sẽ nói rõ khi gặp yêu cầu loại này. Xem phần hướng phát triển.
+- Chỉnh sửa bằng AI trên toàn ảnh lớn: ảnh được thu nhỏ tối đa 1536px trước khi gửi, nên kết quả kém nét hơn ảnh gốc. Với chỉnh sửa cục bộ, Claude chỉ gửi vùng cần sửa, nên phần còn lại giữ nguyên chất lượng.
 - Gộp layer vào layer `Background` bị khoá có thể thất bại; khi đó dùng "gộp tất cả" (flatten).
 
 ## Điều khoản Photopea
@@ -165,7 +198,8 @@ Chi tiết tại [photopea.com/api/accounts](https://www.photopea.com/api/accoun
 
 ## Hướng phát triển
 
-- Thêm chỉnh sửa bằng AI tạo ảnh (xoá vật thể, đổi nền, mở rộng ảnh) qua Qwen-Image-Edit hoặc ComfyUI, dưới dạng tool mới.
+- Thêm nhà cung cấp AI khác cho `ai_edit`, ví dụ ComfyUI tự host trên GPU riêng: viết một hàm cùng chữ ký với `editWithHuggingFace` trong `server/ai-edit.js`.
+- Tách nền trong suốt bằng mô hình phân đoạn (ví dụ RMBG) và mở rộng ảnh (outpainting).
 - Hiển thị câu trả lời dạng streaming.
 - Lưu lịch sử hội thoại và ảnh.
 - Đăng nhập và giới hạn chi phí nếu đưa lên mạng cho nhiều người dùng.
