@@ -3,10 +3,12 @@ import { TOOL_MAP } from './shared/tools.js';
 import { validate } from './shared/validate.js';
 import { RESULT_PREFIX, wrap, rectPoints, findUnsupportedSyntax } from './shared/script-kit.js';
 import { postJson } from './api.js';
-import { labStats, transferColors, describeStats } from './shared/color-transfer.js';
+import { labStats, transferColors, describeStats, adjustColors } from './shared/color-transfer.js';
+import { hexToRgb } from './shared/script-kit.js';
 
 const MIME = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', psd: 'image/vnd.adobe.photoshop' };
 const MATCH_LAYER = 'Màu theo ảnh mẫu';
+const AREA_PREFIX = 'Chỉnh: '; // lớp của adjust_area
 // select_area đổi mép vùng chọn đang có (cần có vùng chọn: Photopea dừng script nếu không có).
 const EDGE_MODES = { soften: 'làm mềm mép', expand: 'nới rộng', contract: 'thu hẹp' };
 // Bật / tắt Quick Mask của Photopea (cùng một lệnh).
@@ -32,6 +34,10 @@ export class ToolRunner {
     this.reference = null;
     // Đang "tô vùng" (Quick Mask của Photopea) bằng nút của Bokin; onPaintChange(on) báo cho giao diện.
     this.painting = false;
+    // Các lần chỉnh vùng (adjust_area) theo tên: giá trị đang áp, để Claude sửa lại ("mạnh hơn") và giao diện liệt kê.
+    this.areaEdits = new Map();
+    // Người dùng vừa bấm "Hút màu": màu tiền cảnh của Photopea là màu họ chỉ (picked_color trong thông tin ảnh).
+    this.picking = false;
   }
 
   /** Đặt ảnh mẫu (File/Blob ảnh): tính thống kê màu trên bản thu nhỏ, giữ ảnh nhỏ để hiện và gửi Claude. */
@@ -135,6 +141,7 @@ app.echoToOE('painting');`);
         case 'ai_edit': return await this._aiEdit(input);
         case 'select_by_color': return await this._selectByColor(input);
         case 'match_reference_colors': return await this._matchReference(input);
+        case 'adjust_area': return await this._adjustArea(input);
         default: return fail(`Công cụ "${name}" chưa được cài đặt.`);
       }
     } catch (error) {
@@ -152,6 +159,11 @@ app.echoToOE('painting');`);
         data.selection = this.painting ? null : await this._selectionBounds();
         if (this.painting) data.painting_selection = true;
         if (this.reference) data.reference_image = { name: this.reference.name, colors: this.reference.colors };
+        const names = new Set((data.layers ?? []).map((l) => l.name));
+        const edits = [...this.areaEdits.values()].filter((e) => names.has(e.layer));
+        if (edits.length) data.area_edits = edits;
+        const picked = this.picking ? await this.pickedColor() : null;
+        if (picked) data.picked_color = picked;
         result = ok(JSON.stringify(data));
       }
     }
@@ -531,6 +543,91 @@ __ok({});`));
       }));
     } finally {
       if (saved) await this._restoreSelection(saved.token);
+    }
+  }
+
+  /** Màu tiền cảnh của Photopea (màu vừa hút bằng công cụ Hút màu), dạng #RRGGBB. */
+  async pickedColor() {
+    const r = await this.bridge.exec("app.echoToOE('__FG__' + app.foregroundColor.rgb.hexValue);");
+    const line = r.echoes.find((e) => e.startsWith('__FG__'));
+    return line && /^[0-9A-F]{6}$/i.test(line.slice(6)) ? `#${line.slice(6).toUpperCase()}` : null;
+  }
+
+  /**
+   * Chỉnh màu một vùng thành lớp "Chỉnh: <tên>" (điểm ảnh đã chỉnh, ngoài vùng trong suốt, mép mềm theo vùng chọn).
+   * Gọi lại cùng tên: thay lớp cũ (giá trị tuyệt đối), trên vùng chọn mới nếu có, không thì đúng vùng cũ.
+   */
+  async _adjustArea(input) {
+    const name = String(input.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40) || 'Vùng chọn';
+    const layer = `${AREA_PREFIX}${name}`;
+    const values = {};
+    for (const k of ['brightness', 'contrast', 'warmth', 'tint', 'saturation', 'hue_shift']) {
+      if (Number(input[k])) values[k] = Math.round(Number(input[k]));
+    }
+    let target = null;
+    if (input.target_color) {
+      const c = hexToRgb(input.target_color);
+      target = [c.r, c.g, c.b];
+      values.target_color = `#${[c.r, c.g, c.b].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+    }
+    if (!Object.keys(values).length) return fail('Chưa có thay đổi nào: cần ít nhất một giá trị khác 0 (hoặc target_color).');
+    const userSelection = await this._selectionBounds();
+    const exists = (await this.bridge.exec(wrap(`var L = __findLayer(doc, ${JSON.stringify(layer)}); __ok({ exists: !!L });`))).echoes
+      .some((e) => e.includes('"exists":true'));
+    // Vùng: vùng chọn hiện tại; không có thì vùng của lần chỉnh cũ cùng tên (độ trong suốt của lớp đó); không thì cả ảnh.
+    let saved = null;
+    let area = 'whole image';
+    if (input.use_selection !== false && userSelection) {
+      saved = await this._saveSelection();
+      area = 'selection';
+    } else if (exists) {
+      await this.bridge.exec(wrap(`${loadSelectionCode(layer)}\n__ok({});`));
+      saved = await this._saveSelection();
+      area = 'same area as before';
+    }
+    if (saved?.isError) return saved;
+    try {
+      if (exists) {
+        const removed = await this._runWrapped(wrap(`var L = __findLayer(doc, ${JSON.stringify(layer)}); if (L) { L.remove(); } __ok({});`));
+        if (removed.isError) return removed;
+      }
+      const exported = await this.bridge.exportDocument('png');
+      if (!exported) return fail('Chưa có ảnh nào đang mở.');
+      const bitmap = await createImageBitmap(new Blob([exported.buffer], { type: 'image/png' }));
+      const W = bitmap.width;
+      const H = bitmap.height;
+      const rect = saved ? clampRect(saved.bounds, W, H) : { x: 0, y: 0, width: W, height: H };
+      const canvas = document.createElement('canvas');
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+      bitmap.close();
+      const image = ctx.getImageData(0, 0, rect.width, rect.height);
+      const weights = saved ? await this._selectionWeights(saved.token, rect, W, H) : null;
+      if (saved && !weights) return fail('Không đọc được hình dạng vùng chọn.');
+      const stats = labStats(image.data, { weights });
+      if (!stats) return fail('Vùng chọn trống.');
+      adjustColors(image.data, stats, { ...values, target });
+      // Vùng chọn thành độ trong suốt của lớp: mép mềm giữ nguyên, và lần sau lấy lại được đúng vùng này.
+      if (weights) for (let i = 0; i < weights.length; i++) image.data[i * 4 + 3] = Math.round(image.data[i * 4 + 3] * weights[i] / 255);
+      ctx.putImageData(image, 0, 0);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const placed = await this._placeImageAsLayer(await blob.arrayBuffer(), rect, layer);
+      if (placed.isError) return placed;
+      this.undoDepth = 0;
+      const edit = { name, layer, ...values };
+      this.areaEdits.delete(name); // lần chỉnh mới nhất đứng cuối danh sách
+      this.areaEdits.set(name, edit);
+      return ok(JSON.stringify({
+        ...edit, area, replaced: exists, bounds: rect,
+        note: 'Gọi lại adjust_area cùng tên với giá trị mới để chỉnh thêm (thay lần này); xoá lớp để bỏ.',
+      }));
+    } finally {
+      if (saved && !saved.isError) {
+        if (userSelection) await this._restoreSelection(saved.token);
+        else await this._runWrapped(wrap(`var T = __findLayer(doc, ${JSON.stringify(saved.token)}); if (T) { T.remove(); } doc.selection.deselect(); __ok({});`));
+      }
     }
   }
 

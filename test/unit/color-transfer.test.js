@@ -75,3 +75,33 @@ test('describeStats: tông ấm có warmth dương', () => {
   assert.ok(warm.warmth > 20 && cool.warmth < -20, JSON.stringify({ warm, cool }));
   assert.equal(describeStats(null), null);
 });
+
+test('adjustColors: sáng hơn, ấm hơn, bớt rực về xám, xoay tông, đổi sang màu đích giữ chênh lệch', async () => {
+  const { adjustColors } = await import('../../shared/color-transfer.js');
+  const run = (rgb, p, n = 4) => { const d = solid(n, rgb); adjustColors(d, labStats(d), p); return [d[0], d[1], d[2]]; };
+  const lab = (c) => rgbToLab(...c);
+  const base = [120, 100, 90];
+  assert.ok(lab(run(base, { brightness: 40 }))[0] > lab(base)[0] + 10, 'sáng hơn');
+  assert.ok(lab(run(base, { warmth: 50 }))[2] > lab(base)[2] + 10, 'ấm hơn: b tăng');
+  assert.ok(lab(run(base, { warmth: -50 }))[2] < lab(base)[2] - 10, 'lạnh hơn: b giảm');
+  assert.ok(lab(run(base, { tint: 50 }))[1] > lab(base)[1] + 10, 'tint hồng: a tăng');
+  const gray = run([200, 40, 40], { saturation: -100 });
+  assert.ok(Math.abs(gray[0] - gray[1]) <= 2 && Math.abs(gray[1] - gray[2]) <= 2, `-100 = xám: ${gray}`);
+  const flipped = lab(run([200, 40, 40], { hue_shift: 180 }));
+  assert.ok(flipped[1] < 0, 'xoay 180°: đỏ thành xanh lục/lam');
+  // đổi màu đích: áo đỏ có nếp (hai sắc đỏ) thành xanh navy, vẫn hai sắc khác nhau
+  const d = new Uint8ClampedArray(8 * 4);
+  for (let i = 0; i < 8; i++) d.set(i % 2 ? [200, 30, 30, 255] : [140, 20, 20, 255], i * 4);
+  adjustColors(d, labStats(d), { target: [30, 50, 120] });
+  const after = labStats(d);
+  const navy = rgbToLab(30, 50, 120);
+  after.mean.forEach((v, c) => near(v, navy[c], 5, `trung bình kênh ${c} về màu đích (lệch chút do cắt vào dải sRGB)`));
+  assert.ok(after.std[0] > 3, 'vẫn còn sáng tối (nếp áo)');
+  // tương phản quanh trung bình của vùng
+  const two = new Uint8ClampedArray(2 * 4);
+  two.set([100, 100, 100, 255], 0);
+  two.set([150, 150, 150, 255], 4);
+  const s0 = labStats(two);
+  adjustColors(two, s0, { contrast: 50 });
+  assert.ok(labStats(two).std[0] > s0.std[0] * 1.4, 'tương phản tăng');
+});

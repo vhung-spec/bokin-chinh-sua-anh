@@ -557,6 +557,41 @@ __ok({ layer: layer.name, preset: ${lit(preset)}, strength: ${num(strength)}, hi
     },
   },
   {
+    name: 'adjust_area',
+    label: 'Chỉnh màu theo vùng',
+    kind: 'client',
+    description:
+      'The main tool for color and tone edits of an AREA (or the whole image): non-destructive and re-editable by chat. ' +
+      'Prefer it over the adjust_* tools whenever the user names an area, picks a color, or may want to tweak the result ' +
+      '("mạnh hơn", "bớt ấm", "bỏ chỉnh bầu trời"). Each edit is its own layer "Chỉnh: <name>" holding the recolored ' +
+      'pixels of that area (soft edges kept); the original stays underneath. Values are ABSOLUTE for that named edit: ' +
+      'calling again with the same name REPLACES it, on the same area unless a new selection is active — so "mạnh hơn" ' +
+      '= the same name with bigger values. get_document_info lists area_edits (name, layer, current values). Remove an ' +
+      'edit by deleting its layer with manage_layer. Area: the current selection if any (use_selection default true), ' +
+      'else the area of the existing edit with that name, else the whole image; when the user names an area ("bầu trời", ' +
+      '"áo đỏ", "da", "nền"), select it first with select_by_color / select_area (picked_color in the snapshot is the color ' +
+      'the user picked with the eyedropper). Values (optional, default 0, -100..100): brightness, contrast, warmth ' +
+      '(+ warmer/yellower, − cooler/bluer), tint (+ magenta/pink, − green), saturation (−100 = gray); hue_shift in ' +
+      'degrees; target_color #RRGGBB recolors the area to that color keeping its light and shadow (change a red shirt to ' +
+      'navy) and can be combined with the others. Typical steps: 10-25 subtle, 30-50 clear.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 40, description: 'Tên ngắn của lần chỉnh, theo vùng: "Bầu trời", "Áo", "Da", "Cả ảnh".' },
+        brightness: { type: 'number', minimum: -100, maximum: 100 },
+        contrast: { type: 'number', minimum: -100, maximum: 100 },
+        warmth: { type: 'number', minimum: -100, maximum: 100, description: '+ ấm (vàng), − lạnh (xanh lam).' },
+        tint: { type: 'number', minimum: -100, maximum: 100, description: '+ hồng, − xanh lá.' },
+        saturation: { type: 'number', minimum: -100, maximum: 100, description: '−100 = đen trắng.' },
+        hue_shift: { type: 'number', minimum: -180, maximum: 180, description: 'Xoay tông màu (độ).' },
+        target_color: COLOR_PARAM('Đổi cả vùng sang màu này, giữ sáng tối.'),
+        use_selection: { type: 'boolean', description: 'Dùng vùng chọn hiện tại (mặc định true).' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'match_reference_colors',
     label: 'Chỉnh màu theo ảnh mẫu',
     kind: 'client',

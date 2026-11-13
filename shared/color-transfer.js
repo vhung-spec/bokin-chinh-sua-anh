@@ -118,3 +118,43 @@ export function describeStats(stats) {
     contrast: round(stats.std[0]),
   };
 }
+
+/**
+ * Chỉnh màu một vùng (tại chỗ), tính trong Lab: dùng cho tool adjust_area (lớp "Chỉnh: <tên>", sửa lại được bằng chat).
+ * Mọi tham số -100..100 (hue_shift tính bằng độ), 0 = không đổi.
+ * @param {Uint8ClampedArray} rgba
+ * @param {{ mean: number[] }} stats - thống kê của vùng (labStats): tâm của tương phản, gốc khi đổi sang màu đích
+ * @param {{ brightness?: number, contrast?: number, warmth?: number, tint?: number, saturation?: number,
+ *   hue_shift?: number, target?: number[] | null }} p - target: [r, g, b] màu đích (đổi màu vật, giữ sáng tối)
+ */
+export function adjustColors(rgba, stats, p) {
+  const target = p.target ? rgbToLab(...p.target) : null;
+  // Đổi sang màu đích: dời trung bình L, a, b của vùng về màu đích, giữ nguyên chênh lệch từng điểm (nếp, bóng).
+  const shift = target ? [target[0] - stats.mean[0], target[1] - stats.mean[1], target[2] - stats.mean[2]] : [0, 0, 0];
+  const pivot = target ? target[0] : stats.mean[0];
+  const contrast = 1 + (p.contrast ?? 0) / 100;
+  const lift = (p.brightness ?? 0) * 0.35;
+  const sat = Math.max(0, 1 + (p.saturation ?? 0) / 100);
+  const angle = ((p.hue_shift ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const warm = (p.warmth ?? 0) * 0.3;
+  const tint = (p.tint ?? 0) * 0.3 + (p.warmth ?? 0) * 0.04;
+  for (let i = 0; i < rgba.length; i += 4) {
+    let [L, a, b] = rgbToLab(rgba[i], rgba[i + 1], rgba[i + 2]);
+    L += shift[0];
+    a += shift[1];
+    b += shift[2];
+    L = (L - pivot) * contrast + pivot + lift;
+    if (angle) {
+      const a2 = a * cos - b * sin;
+      b = a * sin + b * cos;
+      a = a2;
+    }
+    a = a * sat + tint;
+    b = b * sat + warm;
+    const [r, g, bl] = labToRgb(clamp(L, 0, 100), a, b);
+    rgba[i] = r;
+    rgba[i + 1] = g;
+    rgba[i + 2] = bl;
+  }
+}

@@ -101,7 +101,7 @@
               <button type="button">Ảnh bị ám vàng, cân bằng lại màu giúp mình</button>
               <button type="button">Chỉ làm bầu trời xanh hơn, giữ nguyên màu da</button>
               <button type="button">Làm vùng tôi vừa khoanh sáng và ấm hơn, mép hoà vào xung quanh</button>
-              <button type="button">Cắt ảnh thành hình vuông, giữ chủ thể ở giữa</button>
+              <button type="button">Đổi màu tôi vừa hút thành xanh navy, giữ nếp vải</button>
               <button type="button">Thêm chữ "GIẢM 50%" màu đỏ ở góc trên bên phải</button>
             </div>
           </div>
@@ -133,6 +133,7 @@
           <button type="button" data-tool="magicWandTool" title="Bấm vào vùng cùng màu (ví dụ bầu trời)">Đũa thần</button>
           <button type="button" data-tool="marqueeRectTool" title="Kéo một khung chữ nhật">Chữ nhật</button>
           <button type="button" data-tool="marqueeEllipTool" title="Kéo một khung elip">Elip</button>
+          <button type="button" data-tool="eyedropperTool" title="Bấm vào một màu trên ảnh, rồi gõ trong ô chat: đổi màu này thành…">💧 Hút màu</button>
           <button type="button" data-select="invert" title="Đảo ngược vùng chọn: chỉnh phần còn lại">Đảo</button>
           <button type="button" data-select="none" title="Bỏ vùng chọn: chỉnh cả ảnh">Bỏ chọn</button>
         </div>
@@ -143,6 +144,11 @@
           <button type="button" data-edge="contract" data-amount="6" title="Thu vùng chọn hẹp lại 6 px">Thu hẹp</button>
         </div>
         <div class="fill-selection" id="region-info"></div>
+        <div class="picked" id="picked" hidden>
+          <span class="swatch" id="picked-swatch"></span>
+          <span id="picked-text"></span>
+          <button type="button" class="btn small" id="picked-select" title="Chọn mọi chỗ có màu giống màu vừa hút">Chọn vùng màu này</button>
+        </div>
 
         <h3 class="section-title">Phong cách màu</h3>
         <div class="preset-grid" id="preset-grid"></div>

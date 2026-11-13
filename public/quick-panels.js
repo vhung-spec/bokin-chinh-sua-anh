@@ -33,6 +33,7 @@ const SELECT_HINTS = {
   marqueeEllipTool: 'Kéo một khung elip quanh vùng cần sửa.',
   quickSelectTool: 'Tô lên vật thể; Photopea tự bắt theo viền.',
   magicWandTool: 'Bấm vào vùng cùng màu (ví dụ bầu trời).',
+  eyedropperTool: 'Bấm vào một màu trên ảnh trong Photopea, rồi gõ trong ô chat: "đổi màu này thành xanh navy", "làm màu này nhạt hơn"… hoặc bấm "Chọn vùng màu này".',
 };
 
 const AM = "var _c = function (k) { return app.charIDToTypeID(k); }; var _s = function (k) { return app.stringIDToTypeID(k); };";
@@ -68,6 +69,7 @@ function bindSelectTools(container, info, { runner, bridge, isBusy, onChange, se
     }
     if (runner.painting) await runner.finishPaint();
     if (button.dataset.tool) {
+      if (button.dataset.tool === 'eyedropperTool') runner.picking = true;
       const r = await bridge.exec(`${AM} var d = new ActionDescriptor(); var r = new ActionReference(); r.putClass(_s(${JSON.stringify(button.dataset.tool)})); d.putReference(_c('null'), r); app.executeAction(_c('slct'), d, DialogModes.NO);`);
       for (const b of container.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b === button);
       info.textContent = r.completed ? SELECT_HINTS[button.dataset.tool] : 'Không đổi được công cụ; hãy chọn công cụ trực tiếp trong Photopea.';
@@ -241,8 +243,24 @@ export function setupColorPanel({ runner, bridge, log, isBusy, addNote, openImag
 
   // Hàng "Vùng cần chỉnh" (đầu tab): dùng chung cho phong cách màu, màu theo ảnh mẫu và chỉnh nhanh.
   const region = { tools: $('region-tools'), edge: $('region-edge'), info: $('region-info') };
+  const picked = { box: $('picked'), swatch: $('picked-swatch'), text: $('picked-text'), select: $('picked-select') };
+  async function refreshPicked() {
+    const color = runner.picking ? await runner.pickedColor().catch(() => null) : null;
+    picked.box.hidden = !color;
+    if (!color) return;
+    picked.swatch.style.background = color;
+    picked.text.textContent = `Màu vừa hút ${color}: gõ trong ô chat "đổi màu này thành…", hoặc`;
+  }
+  picked.select.addEventListener('click', () => guarded(async () => {
+    const color = await runner.pickedColor();
+    const out = await runner.execute('select_by_color', { method: 'color', color, tolerance: 30 });
+    if (out.isError) setStatus(out.content, 'error');
+    else setStatus(`Đã chọn mọi chỗ có màu giống ${color}.`, 'ok');
+    await refreshMatch();
+  }));
   async function refreshMatch() {
     if (running) return;
+    await refreshPicked();
     if (runner.painting) {
       region.info.textContent = PAINT_HINT;
       region.info.className = 'fill-selection';

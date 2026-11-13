@@ -122,6 +122,8 @@ runner.onExecuted = async (name, outcome) => {
   if (!NO_EDIT_TOOLS.has(name)) scheduleRefresh();
   // Ảnh mới tạo (kể cả do Claude tạo): đây là "ảnh gốc" để so sánh.
   if (name === 'create_document' && !outcome.isError) {
+    runner.areaEdits.clear();
+    runner.picking = false;
     log.reset();
     await log.markOrigin();
   }
@@ -524,6 +526,8 @@ async function openFile(file) {
     setStatus(`Đang mở ${file.name}…`);
     await bridge.openFile(await file.arrayBuffer(), file.name);
     runner.undoDepth = 0;
+    runner.picking = false;
+    runner.areaEdits.clear();
     log.reset();
     await log.markOrigin();
     colorPanel.reset();

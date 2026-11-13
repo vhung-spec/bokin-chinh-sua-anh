@@ -32,7 +32,21 @@ const mock = http.createServer(async (req, res) => {
   const hasToolResult = Array.isArray(lastUser.content) && lastUser.content.some((b) => b.type === 'tool_result');
   const ids = new Set(body.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).map((b) => b.tool_use_id).filter(Boolean));
   let reply;
-  if (scenario === 'match') {
+  const lastText = Array.isArray(lastUser.content) ? lastUser.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n') : String(lastUser.content);
+  if (scenario === 'area') {
+    if (hasToolResult) reply = { content: [{ type: 'text', text: 'Đã đổi màu áo.' }], stop_reason: 'end_turn' };
+    else if (lastText.includes('Đậm hơn chút')) {
+      reply = { content: [{ type: 'tool_use', id: `tu_x${requests.length}`, name: 'adjust_area', input: { name: 'Áo', target_color: '#1E3264', brightness: -25 } }], stop_reason: 'tool_use' };
+    } else {
+      reply = {
+        content: [
+          { type: 'tool_use', id: `tu_s${requests.length}`, name: 'select_by_color', input: { method: 'color', color: '#C83232', tolerance: 30 } },
+          { type: 'tool_use', id: `tu_a${requests.length}`, name: 'adjust_area', input: { name: 'Áo', target_color: '#1E3264' } },
+        ],
+        stop_reason: 'tool_use',
+      };
+    }
+  } else if (scenario === 'match') {
     reply = hasToolResult
       ? { content: [{ type: 'text', text: 'Đã chỉnh màu vùng chọn giống ảnh mẫu.' }], stop_reason: 'end_turn' }
       : { content: [{ type: 'tool_use', id: `tu_m${requests.length}`, name: 'match_reference_colors', input: { strength: 100 } }], stop_reason: 'tool_use' };
@@ -376,6 +390,34 @@ test('ảnh mẫu đính kèm ở ô chat: Claude nhận ảnh mẫu (một lầ
   assert.ok(!again.some((b) => b.type === 'text' && b.text.includes('đã chọn ảnh mẫu')), 'không gửi lại ghi chú ảnh mẫu');
   await page.click('#ref-chip-clear');
   assert.equal(await page.isHidden('#ref-chip'), true);
+  scenario = 'design';
+});
+
+test('chỉnh vùng bằng chat: đổi màu áo, rồi "đậm hơn chút" sửa lại đúng lớp đó (không chồng thêm)', async () => {
+  scenario = 'area';
+  await page.click('#new-chat-btn');
+  json(await tool(page, 'create_document', { width: 200, height: 100, background: '#3232C8' }));
+  json(await tool(page, 'select_area', { mode: 'rect', x: 0, y: 0, width: 100, height: 100 }));
+  json(await tool(page, 'edit_selection', { action: 'fill', color: '#C83232' }));
+  json(await tool(page, 'select_area', { mode: 'none' }));
+  await page.fill('#input', 'Đổi màu áo đỏ thành xanh navy');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.followups');
+  const first = await pixel(page, 50, 50);
+  assert.ok(first.b > first.r, `áo đã thành xanh: ${JSON.stringify(first)}`);
+  assert.deepEqual(await pixel(page, 150, 50), { r: 50, g: 50, b: 200, a: 255 }, 'phần xanh dương ngoài vùng giữ nguyên');
+
+  const start = requests.length;
+  await page.fill('#input', 'Đậm hơn chút');
+  await page.press('#input', 'Enter');
+  await page.waitForFunction(() => document.querySelectorAll('.msg.assistant').length >= 2 && !window.bokin.state.busy);
+  const snap = requests.slice(start).map((r) => JSON.stringify(r.body.messages.at(-1).content)).find((t) => t.includes('Đậm hơn chút'));
+  assert.match(snap, /area_edits/, 'Claude thấy các lần chỉnh vùng đang có');
+  const doc = json(await tool(page, 'get_document_info'));
+  assert.deepEqual(doc.layers.map((l) => l.name), ['Chỉnh: Áo', 'Background'], 'vẫn một lớp');
+  assert.equal(doc.area_edits[0].brightness, -25);
+  const darker = await pixel(page, 50, 50);
+  assert.ok(darker.b < first.b, `đậm hơn: ${JSON.stringify({ first, darker })}`);
   scenario = 'design';
 });
 
