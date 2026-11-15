@@ -35,14 +35,23 @@ Khung bên phải gồm **thanh công cụ** dùng chung và các **tab**, mỗi
 |---|---|
 | **Mở ảnh** | Mở ảnh từ máy (hoặc kéo thả ảnh vào bất kỳ đâu trên trang) |
 | **Tải ảnh** | Chọn JPG (nhẹ, đăng mạng), PNG (giữ chất lượng, nền trong suốt), WEBP hoặc PSD (giữ layer để sửa tiếp) |
-| **Hoàn tác** / **Làm lại** | Gỡ **cả thao tác** vừa làm trong một lần bấm: một phong cách màu, một lần Generative Fill (khoảng chục bước trong Photopea), hay toàn bộ những gì Claude làm cho một câu lệnh. Phím tắt **Ctrl+Z** / **Ctrl+Y** (khi con trỏ không nằm trong Photopea hay ô nhập) |
+| **Hoàn tác** / **Làm lại** | Gỡ **cả thao tác** vừa làm trong một lần bấm: một phong cách màu, một lần Generative Fill (khoảng chục bước trong Photopea), hay toàn bộ những gì Claude làm cho một câu lệnh. Bokin về đúng bước trước thao tác đó trong lịch sử Photopea, nên vẫn đúng khi ảnh đã quá 20 bước hay khi bạn tự Ctrl+Z trong Photopea. Phím tắt **Ctrl+Z** / **Ctrl+Y** (khi con trỏ không nằm trong Photopea hay ô nhập) |
 | **So sánh** | **Nhấn giữ** để xem ảnh gốc lúc vừa mở, thả ra để quay lại ảnh đã chỉnh |
 
 Khi chưa có ảnh, thẻ **Bắt đầu** hiện ra: mở ảnh từ máy hoặc tạo ảnh trống theo cỡ có sẵn (vuông 1080, bìa Facebook 1200×630, story 1080×1920, 16:9 1280×720, A4).
 
 **Các tab:**
 
-1. **Trò chuyện**: gõ yêu cầu tiếng Việt, hoặc bấm một câu gợi ý. Chỉnh màu một vùng ("đổi áo đỏ thành xanh navy", "chỉ làm bầu trời ấm hơn") thì Claude khoanh vùng (theo màu, hoặc dùng vùng bạn đã khoanh / tô / hút màu) và đặt kết quả thành một lớp có tên, ví dụ **"Chỉnh: Áo"**; gõ tiếp "đậm hơn chút", "bớt ấm", "nhạt lại" là Claude chỉnh lại **chính lớp đó** (giá trị mới thay giá trị cũ, đúng vùng cũ), "bỏ chỉnh áo" là xoá riêng lớp đó. Claude thấy danh sách các lần chỉnh và giá trị đang áp trong thông tin ảnh gửi kèm mỗi tin nhắn. Sau mỗi câu trả lời có chỉnh sửa, Bokin hiện các nút **Mạnh hơn**, **Nhẹ hơn**, **Hoàn tác** (gỡ mọi chỉnh sửa của câu lệnh đó) và **Tải JPG**, để khỏi phải gõ lại.
+1. **Trò chuyện**: gõ yêu cầu tiếng Việt, hoặc bấm một câu gợi ý. Chỉnh màu một vùng ("đổi áo đỏ thành xanh navy", "chỉ làm bầu trời ấm hơn") thì Claude khoanh vùng (theo màu, hoặc dùng vùng bạn đã khoanh / tô / hút màu) và đặt kết quả thành một lớp có tên, ví dụ **"Chỉnh: Áo"**; gõ tiếp "đậm hơn chút", "bớt ấm", "nhạt lại" là Claude chỉnh lại **chính lớp đó** (giá trị mới thay giá trị cũ, đúng vùng cũ), "bỏ chỉnh áo" là xoá riêng lớp đó. Claude thấy danh sách các lần chỉnh và giá trị đang áp trong thông tin ảnh gửi kèm mỗi tin nhắn.
+
+   Những thứ giúp điều khiển bằng chat nhanh hơn:
+   - **Lệnh làm ngay ⚡** (không gọi Claude, tức thì, không tốn phí): *hoàn tác*, *hoàn tác 2 bước*, *làm lại*, *bỏ chọn*, *đảo vùng chọn*, *xem ảnh gốc* (hiện ảnh gốc 2 giây), *tải ảnh*, *lưu ảnh png*, và với lần chỉnh vùng vừa làm: *mạnh hơn*, *nhẹ hơn chút*, *mạnh hơn nhiều*, *áo nhẹ hơn* (đổi **mức** của lần chỉnh đó, 10–200%), *bỏ chỉnh áo*. Gõ không dấu cũng được. Câu dài hơn hay có thêm ý ("đậm hơn và ấm hơn", "sáng hơn") vẫn gửi Claude; "đậm hơn", "nhạt hơn" cũng gửi Claude vì đó là ý về màu. Bokin ghi lại những gì đã tự làm để Claude biết ở tin nhắn sau.
+   - **Thanh "Đã chỉnh"** (trên khung chat, khi có lần chỉnh vùng): mỗi lớp "Chỉnh: <tên>" một hàng, **kéo** để chỉnh mức (100% = như lúc chỉnh), **👁** ẩn để so sánh riêng lần chỉnh đó, **✕** bỏ. Không tốn phí, hoàn tác được.
+   - **Nút gợi ý** sau mỗi chỉnh sửa: **Mạnh hơn**, **Nhẹ hơn**, **Bỏ "<tên>"** (khi vừa chỉnh một vùng: làm ngay ⚡), **Hoàn tác**, **Tải JPG**.
+   - **Hàng chọn vùng** ngay trên ô chat: **🖌 Tô vùng**, Lasso, Chọn nhanh, **💧 Hút màu**, Bỏ chọn, không cần sang tab Màu nhanh. Dòng xanh trên ô chat cho biết Claude sẽ hiểu "vùng này" là vùng nào, "màu này" là màu nào (chỉ báo màu khi bạn đã thật sự hút một màu).
+   - **🎤** nói thay gõ (tiếng Việt, Chrome / Edge): chữ hiện trong ô chat để xem lại rồi bấm Gửi. Lần đầu trình duyệt hỏi quyền dùng micro.
+   - **↑ / ↓** trong ô chat: gọi lại các câu đã gửi. **☆** trên câu đã gửi: lưu vào **⭐ Đã lưu** để dùng lại (giữ trong trình duyệt). Phím **/** ở bất kỳ đâu ngoài Photopea: tới ô chat để gõ.
+   - **Làm giống ảnh trước**: mở ảnh khác sau khi đã chỉnh một ảnh thì Bokin hiện nút **↻ Làm giống ảnh trước**. Claude nhận các bước đã làm với ảnh trước (trừ bước đã hoàn tác), cùng công cụ và giá trị, rồi làm lại trên ảnh mới (tự chọn lại vùng tương ứng). Gõ "làm giống ảnh trước" cũng được.
 2. **Màu nhanh** (miễn phí, không gọi Claude). Trên cùng là hàng **Vùng cần chỉnh**, dùng chung cho mọi chỉnh màu trong tab: **🖌 Tô vùng**, Lasso, Chọn nhanh, Đũa thần, Chữ nhật, Elip, **💧 Hút màu** (bấm vào một màu trên ảnh rồi gõ "đổi màu này thành…", hoặc bấm **Chọn vùng màu này**), **Đảo** (chỉnh phần còn lại), **Bỏ chọn** (chỉnh cả ảnh), và **Mép vùng**: **Làm mềm** (10 px, để chỗ chỉnh hoà vào xung quanh), **Nới rộng** / **Thu hẹp** (6 px). Dòng bên dưới luôn cho biết đang chỉnh vùng nào. Tiếp theo là 8 phong cách màu với thanh độ mạnh, cùng các nút Tự cân màu, Ấm hơn, Lạnh hơn, Tươi hơn, Nhạt hơn. Bấm một phong cách khác hoặc kéo thanh độ mạnh thì Bokin **thay** phong cách vừa áp, không chồng lên, nên thử nhiều kiểu thoải mái. Nếu đang có vùng chọn, chỉ vùng đó được chỉnh.
 
    **Màu theo ảnh mẫu** (miễn phí, giống *Match Color* của Photoshop): bấm **Chọn ảnh mẫu** (ảnh có tông màu bạn muốn), khoanh hoặc **🖌 Tô vùng** cần chỉnh (bỏ trống = cả ảnh), rồi bấm **Áp màu giống ảnh mẫu**. Bokin đưa độ sáng, độ tương phản và màu của vùng đó về giống ảnh mẫu (tính trong không gian màu Lab, ngay trong trình duyệt, không gọi AI), đặt kết quả thành layer **"Màu theo ảnh mẫu"** có mask đúng hình vùng chọn (giữ mép mềm), ảnh gốc vẫn ở dưới. Thanh **Độ mạnh** là độ mờ đục của layer; kéo thì Bokin áp lại, thay kết quả vừa rồi. **Giữ độ sáng của ảnh gốc** chỉ lấy màu (hợp khi ảnh mẫu tối hay sáng hơn hẳn, hoặc với da người). Khoanh sát vùng cần đổi: vật khác màu nằm trong vùng cũng bị đổi theo.
@@ -145,6 +154,7 @@ server/
   system-prompt.js  hướng dẫn cho Claude
 shared/             dùng chung cho server và trình duyệt
   tools.js          định nghĩa 33 tool + hàm sinh script Photopea cho từng tool
+  quick-commands.js đọc lệnh ngắn làm ngay trong ô chat (hoàn tác, mạnh hơn, bỏ chỉnh…)
   color.js          mã Color Balance, Curves/Levels từng kênh, Hue/Sat theo dải màu, 8 preset màu
   color-transfer.js chỉnh màu theo ảnh mẫu (Lab, trung bình + độ trải, như Match Color)
   script-kit.js     hàm phụ trợ sinh script an toàn (thoát chuỗi, kiểm tra cú pháp)
@@ -152,6 +162,7 @@ shared/             dùng chung cho server và trình duyệt
 public/
   index.html, styles.css, app.js   giao diện: thanh công cụ, 3 tab, vòng lặp chat
   quick-panels.js                  tab Màu nhanh và tab Tạo bằng AI
+  chat-extras.js                   thanh "Đã chỉnh", micro, ↑ gọi lại câu cũ, lệnh đã lưu
   history.js                       hoàn tác / làm lại theo thao tác, xem ảnh gốc
   photopea-bridge.js               giao tiếp với Photopea
   tool-runner.js                   chạy tool, xem ảnh, hoàn tác, xuất file
@@ -301,7 +312,7 @@ Nhờ vậy, một lần chỉnh màu đơn giản qua ô chat có thể chỉ c
 
 Giới hạn:
 
-- Hoàn tác/làm lại của Bokin dựa trên lịch sử Photopea. Nếu bạn tự bấm Ctrl+Z trong Photopea (hoặc bấm vào bảng Lịch sử của Photopea), Bokin không biết, nên lần hoàn tác tiếp theo có thể lệch bước; khi đó Bokin chỉ hoàn tác từng bước một. Nên dùng nút **Hoàn tác** của Bokin.
+- Photopea chỉ giữ **20 bước** lịch sử gần nhất (40 với tài khoản Premium của Photopea); một lần chỉnh vùng tốn khoảng 10 bước. Một thao tác dài hơn thế (ví dụ một câu lệnh chỉnh ba vùng) thì không hoàn tác trọn được: Bokin báo rõ, khi đó bỏ từng lần chỉnh ở thanh **Đã chỉnh**. Để nhận ra đúng bước lịch sử, Bokin đọc cấu trúc bên trong của Photopea; nếu Photopea đổi cấu trúc đó, Bokin tự quay về cách đếm bước cũ (vẫn đúng tới 20 bước).
 - Chỉnh sửa bằng AI trên toàn ảnh lớn: ảnh được thu nhỏ còn cạnh dài tối đa 1024px (đổi bằng `AI_EDIT_MAX_SIDE`) trước khi gửi, nên kết quả kém nét hơn ảnh gốc. Với chỉnh sửa theo vùng chọn, Bokin chỉ gửi vùng cần sửa kèm một phần xung quanh, nên phần còn lại giữ nguyên chất lượng.
 - Gộp layer vào layer `Background` bị khoá có thể thất bại; khi đó dùng "gộp tất cả" (flatten).
 

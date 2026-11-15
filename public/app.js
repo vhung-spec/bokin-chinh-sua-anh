@@ -6,15 +6,22 @@
 import { PhotopeaBridge } from './photopea-bridge.js';
 import { ToolRunner } from './tool-runner.js';
 import { toolLabel } from './shared/tools.js';
-import { setupColorPanel, setupFillPanel, syncPaintButtons } from './quick-panels.js';
+import { setupColorPanel, setupFillPanel, syncPaintButtons, bindSelectTools } from './quick-panels.js';
 import { ActionLog } from './history.js';
 import { usageCost, totalCost, formatUsd } from './shared/prices.js';
 import { getJson, postJson } from './api.js';
+import { parseQuickCommand, nextStrength } from './shared/quick-commands.js';
+import { setupEditStrip, setupVoice, setupRecall, setupSaved } from './chat-extras.js';
 
 const MAX_ROUNDS = 15; // số lượt gọi Claude tối đa cho một yêu cầu
 const PREVIEW_SIZE = 768; // cạnh dài ảnh xem trước gửi cho Claude (đủ để đánh giá màu, ít token hơn 1024)
 // Các tool không làm thay đổi ảnh nhìn thấy được: không cần gắn ảnh "sau khi chỉnh".
 const NON_VISUAL_TOOLS = new Set(['get_document_info', 'view_image', 'export_image', 'select_area', 'select_by_color', 'create_document']);
+const AREA_PREFIX = 'Chỉnh: '; // lớp của một lần chỉnh vùng (adjust_area)
+// Công cụ chỉ chọn vùng: không đổi "thao tác gần nhất" (khoanh vùng xong rồi nói "mạnh hơn" vẫn là lần chỉnh trước đó).
+const SELECT_TOOLS = new Set(['select_area', 'select_by_color']);
+// Không ghi vào "công thức" của ảnh (làm giống ảnh trước): chỉ xem, tải về.
+const RECIPE_SKIP = new Set(['get_document_info', 'view_image', 'export_image']);
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -66,6 +73,10 @@ const state = {
   conversationUsageStart: 0,
   /** đang chạy thao tác của thanh công cụ (hoàn tác, so sánh...) */
   toolbarBusy: false,
+  /** tên lần chỉnh vùng nếu thao tác chỉnh ảnh gần nhất là nó ("mạnh hơn" không kèm tên nói tới lần đó), không thì null */
+  lastAreaEdit: null,
+  /** các bước đã làm với ảnh trước (cho "làm giống ảnh trước"): { image, items: [{ text, steps }] } hoặc null */
+  previousRecipe: null,
 };
 
 const bridge = new PhotopeaBridge(els.iframe, { config: { environment: { lang: 'vi' } } });
@@ -110,6 +121,65 @@ function referenceBlocks() {
 }
 
 const log = new ActionLog(runner, bridge);
+
+/**
+ * "Công thức" của ảnh đang mở: mỗi thao tác (một câu chat, một lệnh làm ngay, một nút) với các tool đã chạy, bỏ
+ * thao tác đã hoàn tác. Mở ảnh khác thì thành ghi chú cho Claude để "làm giống ảnh trước".
+ */
+const recipe = {
+  image: null,
+  items: [],
+  stack: [],
+  seq: 0,
+  begin(text) {
+    const item = { id: ++this.seq, text: String(text).slice(0, 200), steps: [], undone: false };
+    this.stack.push(item);
+    return item;
+  },
+  end(item) {
+    this.stack = this.stack.filter((i) => i !== item);
+    if (item.steps.length) this.items.push(item);
+    if (this.items.length > 30) this.items.shift();
+  },
+  step(name, input) {
+    const item = this.stack.at(-1);
+    if (!item || RECIPE_SKIP.has(name) || item.steps.length >= 40) return;
+    const copy = { ...input };
+    if (typeof copy.script === 'string' && copy.script.length > 300) copy.script = `${copy.script.slice(0, 300)}…`;
+    item.steps.push({ tool: name, input: copy });
+  },
+  mark(id, undone) {
+    const item = this.items.find((i) => i.id === id);
+    if (item) item.undone = undone;
+  },
+  live() {
+    return this.items.filter((i) => !i.undone).map(({ text, steps }) => ({ text, steps }));
+  },
+  restart(image) {
+    this.image = image;
+    this.items = [];
+    this.stack = [];
+  },
+};
+// Mọi thao tác ghi vào ActionLog (chat, nút, lệnh làm ngay) cũng là một mục của công thức; hoàn tác thì bỏ mục đó.
+const recordAction = log.record.bind(log);
+log.record = async (meta, fn) => {
+  const item = recipe.begin(meta.recipe ?? meta.label);
+  try {
+    return await recordAction({ ...meta, id: item.id }, fn);
+  } finally {
+    recipe.end(item);
+  }
+};
+for (const [method, undone] of [['undo', true], ['redo', false]]) {
+  const original = log[method].bind(log);
+  log[method] = async () => {
+    const out = await original();
+    if (!out.isError && out.entry?.id) recipe.mark(out.entry.id, undone);
+    return out;
+  };
+}
+
 const isBusy = () => state.busy || state.toolbarBusy;
 const openImage = () => els.fileInput.click();
 const colorPanel = setupColorPanel({ runner, bridge, log, isBusy, addNote, openImage, reference });
@@ -117,12 +187,18 @@ const fillPanel = setupFillPanel({ runner, bridge, log, isBusy, addNote, openIma
 
 // Sau mỗi tool: có chỉnh sửa mới thì không còn gì để "làm lại"; cập nhật thẻ Bắt đầu và vùng chọn.
 const NO_EDIT_TOOLS = new Set(['undo', 'redo', 'get_document_info', 'view_image', 'export_image']);
-runner.onExecuted = async (name, outcome) => {
+runner.onExecuted = async (name, outcome, input) => {
   if (!outcome.isError && !NO_EDIT_TOOLS.has(name)) log.clearRedo();
   if (!NO_EDIT_TOOLS.has(name)) scheduleRefresh();
+  if (!outcome.isError) {
+    recipe.step(name, input ?? {});
+    if (name === 'adjust_area') state.lastAreaEdit = JSON.parse(outcome.content).name;
+    else if (!NO_EDIT_TOOLS.has(name) && !SELECT_TOOLS.has(name)) state.lastAreaEdit = null;
+  }
   // Ảnh mới tạo (kể cả do Claude tạo): đây là "ảnh gốc" để so sánh.
   if (name === 'create_document' && !outcome.isError) {
-    runner.areaEdits.clear();
+    runner.forgetAreaEdits();
+    state.lastAreaEdit = null;
     runner.picking = false;
     log.reset();
     await log.markOrigin();
@@ -148,7 +224,55 @@ reference.on((ref) => {
 $('ref-btn').addEventListener('click', () => $('match-file').click());
 $('ref-chip-clear').addEventListener('click', () => reference.clear());
 
-window.bokin = { bridge, runner, state, log, showTab, reference, executeTool: (name, input) => runner.execute(name, input) };
+// Thanh "Đã chỉnh": mỗi lần chỉnh vùng một hàng (kéo đổi mức, ẩn để so sánh, bỏ), không gọi Claude.
+const strip = setupEditStrip({
+  box: $('edits'),
+  list: $('edits-list'),
+  load: () => (bridge.isReady ? runner.areaEditList() : Promise.resolve([])),
+  onScale: (name, value) => toolbarAction(async () => {
+    const out = await log.record({ kind: 'quick', label: `mức chỉnh "${name}" ${value}%`, recipe: `Đổi mức chỉnh "${name}" thành ${value}%` },
+      () => runner.rescaleAreaEdit(name, value));
+    if (out.isError) return showToast(out.content, 'error');
+    addNote(`scale-${name}`, `(Ghi chú hệ thống: người dùng kéo thanh "Đã chỉnh": lần chỉnh "${name}" giờ ở mức ${value}% (strength).)`);
+  }),
+  onToggle: (name, visible) => toolbarAction(async () => {
+    const out = await log.record({ kind: 'quick', label: `${visible ? 'hiện' : 'ẩn'} lần chỉnh "${name}"` },
+      () => runner.setAreaEditVisible(name, visible));
+    if (out.isError) return showToast(out.content, 'error');
+    addNote(`visible-${name}`, `(Ghi chú hệ thống: người dùng đã ${visible ? 'hiện lại' : 'ẩn'} lớp của lần chỉnh "${name}".)`);
+  }),
+  onRemove: (name) => toolbarAction(() => quickRemove(name, `Bỏ lần chỉnh "${name}"`)),
+});
+
+// Hàng chọn vùng ngay trong ô chat (giống hàng "Vùng cần chỉnh" của tab Màu nhanh).
+bindSelectTools($('chat-region'), $('chat-region-info'), {
+  runner,
+  bridge,
+  isBusy,
+  onChange: async () => {
+    await updateSelectionHint();
+    colorPanel.refresh();
+  },
+  setStatus: (text, kind) => showToast(text, kind === 'error' ? 'error' : ''),
+});
+
+const voice = setupVoice({
+  button: $('mic-btn'),
+  input: els.input,
+  onError: (text) => showToast(text, 'error'),
+  onEnd: autoGrow,
+});
+const recall = setupRecall(els.input);
+const saved = setupSaved({ button: $('saved-btn'), menu: $('saved-menu'), emptyBox: $('saved-group'), onUse: (text) => handleText(text) });
+saved.on(() => {
+  for (const b of els.chat.querySelectorAll('.msg.user .save')) markSaved(b);
+});
+$('saved-group').addEventListener('click', (e) => {
+  const button = e.target.closest('button');
+  if (button) handleText(button.textContent.trim());
+});
+
+window.bokin = { bridge, runner, state, log, showTab, reference, recipe, executeTool: (name, input) => runner.execute(name, input) };
 
 // ───────────────────────────── Khởi động ─────────────────────────────
 setStatus('Đang tải Photopea…');
@@ -198,7 +322,14 @@ els.input.addEventListener('input', autoGrow);
 els.input.addEventListener('focus', updateSelectionHint);
 $('suggestions').addEventListener('click', (e) => {
   const button = e.target.closest('button');
-  if (button) send(button.textContent.trim());
+  if (button) handleText(button.textContent.trim());
+});
+// Phím "/" ở ngoài ô nhập: tới ô chat để gõ ngay.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.target.closest('textarea, input, select, [contenteditable]')) return;
+  e.preventDefault();
+  showTab('chat');
+  els.input.focus();
 });
 els.stop.addEventListener('click', () => {
   state.stopRequested = true;
@@ -207,19 +338,128 @@ els.stop.addEventListener('click', () => {
 
 function submitInput() {
   const text = els.input.value.trim();
-  if (!text || state.busy) return;
+  if (!text || isBusy()) return;
+  voice.stop();
   els.input.value = '';
   autoGrow();
-  send(text);
+  recall.remember(text);
+  handleText(text);
+}
+
+/** Một câu của người dùng: lệnh ngắn thì Bokin làm ngay (không tốn phí), câu khác gửi Claude. */
+async function handleText(text) {
+  if (isBusy()) return;
+  if (await tryQuick(text)) return;
+  await send(text);
+}
+
+/**
+ * Lệnh làm ngay: hoàn tác, làm lại, bỏ / đảo vùng chọn, so sánh, tải ảnh, "mạnh hơn" / "nhẹ hơn" và "bỏ chỉnh <tên>"
+ * của lần chỉnh vùng. Trả về false nếu câu này phải gửi Claude.
+ * @param {string} text
+ * @param {object} [forced] - lệnh đã biết (nút gợi ý), không cần đọc câu
+ */
+async function tryQuick(text, forced = null) {
+  if (!bridge.isReady) return false;
+  const edits = await runner.areaEditList().catch(() => []);
+  const names = edits.map((e) => e.name);
+  const cmd = forced ?? parseQuickCommand(text, { edits: names, last: names.includes(state.lastAreaEdit) ? state.lastAreaEdit : null });
+  if (!cmd) return false;
+  if (cmd.kind === 'scale') {
+    const edit = edits.find((e) => e.name === cmd.name);
+    cmd.strength = edit ? nextStrength(edit.strength ?? 100, cmd.factor) : null;
+    if (cmd.strength === null) return false; // hết mức (hoặc không còn lần chỉnh đó): để Claude đổi chính các giá trị
+  }
+  showTab('chat');
+  $('selection-hint').hidden = true;
+  $('chat-region-info').hidden = true;
+  for (const old of els.chat.querySelectorAll('.followups')) old.remove();
+  renderUser(text);
+  await toolbarAction(() => runQuick(cmd, text));
+  return true;
+}
+
+async function runQuick(cmd, text) {
+  switch (cmd.kind) {
+    case 'undo':
+    case 'redo': {
+      const labels = [];
+      for (let i = 0; i < cmd.steps; i++) {
+        const r = await (cmd.kind === 'undo' ? log.undo() : log.redo());
+        if (r.isError) {
+          if (!labels.length) return renderError(r.content);
+          break;
+        }
+        labels.push(r.label ?? 'một bước');
+      }
+      if (cmd.kind === 'undo') colorPanel.reset();
+      const verb = cmd.kind === 'undo' ? 'hoàn tác' : 'làm lại';
+      addNote('undo', `(Ghi chú hệ thống: người dùng gõ "${text}", Bokin đã ${verb}: ${labels.join(', ')}.)`);
+      renderQuick(`Đã ${verb} ${labels.join(', ')}.`);
+      return renderFollowups();
+    }
+    case 'deselect':
+    case 'invert': {
+      const out = await runner.execute('select_area', { mode: cmd.kind === 'deselect' ? 'none' : 'invert' });
+      if (out.isError) return renderError(out.content);
+      return renderQuick(cmd.kind === 'deselect'
+        ? 'Đã bỏ vùng chọn: yêu cầu tiếp theo áp cho cả ảnh.'
+        : 'Đã đảo vùng chọn: giờ đang chọn phần còn lại.');
+    }
+    case 'compare': {
+      if (!(await runner._hasDocument())) return renderError('Chưa có ảnh nào đang mở.');
+      const note = renderQuick('Đang hiện ảnh gốc 2 giây…');
+      $('compare-btn').classList.add('pressed');
+      try {
+        await log.showOriginal();
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } finally {
+        await log.restore();
+        $('compare-btn').classList.remove('pressed');
+      }
+      note.textContent = 'Đã hiện ảnh gốc 2 giây. Muốn xem lâu hơn: nhấn giữ nút So sánh ở trên.';
+      return null;
+    }
+    case 'export': {
+      const out = await runner.execute('export_image', { format: cmd.format });
+      if (out.isError) return renderError(out.content);
+      return renderQuick(`Đã tải ${JSON.parse(out.content).saved_as}.`);
+    }
+    case 'scale': {
+      const out = await log.record({ kind: 'quick', label: `mức chỉnh "${cmd.name}" ${cmd.strength}%`, recipe: text },
+        () => runner.rescaleAreaEdit(cmd.name, cmd.strength));
+      if (out.isError) return renderError(out.content);
+      addNote(`scale-${cmd.name}`, `(Ghi chú hệ thống: người dùng gõ "${text}", Bokin tự đổi mức lần chỉnh "${cmd.name}" thành ${cmd.strength}% (strength).)`);
+      renderQuick(`Đã chỉnh "${cmd.name}" ${cmd.factor > 1 ? 'mạnh' : 'nhẹ'} hơn: mức ${cmd.strength}%. Kéo thanh "Đã chỉnh" ở trên để thử mức khác.`);
+      return renderFollowups();
+    }
+    case 'remove':
+      await quickRemove(cmd.name, text);
+      return renderFollowups();
+    default:
+      return null;
+  }
+}
+
+/** Bỏ hẳn một lần chỉnh vùng (xoá lớp "Chỉnh: <tên>"); hoàn tác được. */
+async function quickRemove(name, text) {
+  const out = await log.record({ kind: 'quick', label: `bỏ chỉnh "${name}"`, recipe: text },
+    () => runner.execute('manage_layer', { action: 'delete', layer: `${AREA_PREFIX}${name}` }));
+  if (out.isError) return renderError(out.content);
+  addNote(`remove-${name}`, `(Ghi chú hệ thống: Bokin đã bỏ lần chỉnh "${name}" (xoá lớp của nó) theo lời người dùng.)`);
+  renderQuick(`Đã bỏ lần chỉnh "${name}". Muốn lấy lại: gõ "hoàn tác".`);
+  return null;
 }
 
 async function send(text) {
   if (state.busy) return;
   $('selection-hint').hidden = true;
+  $('chat-region-info').hidden = true;
   showTab('chat');
   for (const old of els.chat.querySelectorAll('.followups')) old.remove();
   setBusy(true);
   renderUser(text);
+  voice.stop();
   // Gửi kèm trạng thái hiện tại (thông tin ảnh + ảnh xem trước) để Claude không phải tốn 2 lượt gọi đầu tiên.
   const snapshot = await snapshotBlocks().catch(() => []);
   const content = [
@@ -234,28 +474,40 @@ async function send(text) {
   // Ghi cả yêu cầu thành MỘT thao tác: bấm Hoàn tác là gỡ mọi chỉnh sửa Claude làm cho yêu cầu này.
   const short = text.length > 40 ? `${text.slice(0, 40)}…` : text;
   const before = log.undoStack.length;
-  await log.record({ kind: 'chat', label: `yêu cầu "${short}"` }, () => runLoop());
+  await log.record({ kind: 'chat', label: `yêu cầu "${short}"`, recipe: text }, () => runLoop());
   if (log.undoStack.length > before) renderFollowups();
   refreshUi();
 }
 
-/** Nút gợi ý sau câu trả lời có chỉnh sửa: chỉnh thêm nhanh, hoàn tác (miễn phí), tải ảnh. */
+/**
+ * Nút gợi ý sau một chỉnh sửa. ⚡ = Bokin làm ngay, không gọi Claude: mạnh / nhẹ hơn khi thao tác vừa rồi là một
+ * lần chỉnh vùng (đổi mức của lần đó), bỏ lần chỉnh đó, hoàn tác, tải ảnh.
+ */
 function renderFollowups() {
   const box = make('div', 'followups');
-  const add = (label, onClick) => {
-    const b = make('button', '', label);
+  const add = (label, text, cmd = null) => {
+    const b = make('button', cmd ? 'local' : '', label);
     b.type = 'button';
-    b.addEventListener('click', () => {
+    if (cmd) b.title = 'Làm ngay, không gọi AI, không tốn phí';
+    b.addEventListener('click', async () => {
       if (isBusy()) return;
       box.remove();
-      onClick();
+      if (cmd && (await tryQuick(text, cmd))) return;
+      await send(text);
     });
     box.append(b);
   };
-  add('Mạnh hơn', () => send('Mạnh hơn một chút'));
-  add('Nhẹ hơn', () => send('Nhẹ hơn một chút'));
-  add('Hoàn tác', () => doUndo());
-  add('Tải JPG', () => exportImage('jpg'));
+  const area = state.lastAreaEdit;
+  if (area) {
+    add('Mạnh hơn', 'mạnh hơn', { kind: 'scale', name: area, factor: 1.4 });
+    add('Nhẹ hơn', 'nhẹ hơn', { kind: 'scale', name: area, factor: 0.7 });
+    add(`Bỏ "${area}"`, `bỏ chỉnh ${area}`, { kind: 'remove', name: area });
+  } else {
+    add('Mạnh hơn', 'Mạnh hơn một chút');
+    add('Nhẹ hơn', 'Nhẹ hơn một chút');
+  }
+  add('Hoàn tác', 'hoàn tác', { kind: 'undo', steps: 1 });
+  add('Tải JPG', 'tải ảnh jpg', { kind: 'export', format: 'jpg' });
   append(box);
 }
 
@@ -467,26 +719,47 @@ async function callClaude() {
   }
 }
 
+/** Dòng trên ô chat: vùng đang chọn / đang tô, màu vừa hút: những gì Claude sẽ hiểu là "vùng này", "màu này". */
 async function updateSelectionHint() {
   const hint = $('selection-hint');
   if (state.busy || !bridge.isReady) return;
-  const sel = await runner._selectionBounds().catch(() => null);
-  if (!sel) {
-    hint.hidden = true;
-    return;
+  const sel = runner.painting ? null : await runner._selectionBounds().catch(() => null);
+  const color = await runner.pickedColorIfAny().catch(() => null);
+  const lines = [];
+  if (runner.painting) {
+    lines.push(['', 'Đang tô vùng: tô lên chỗ cần chỉnh trong Photopea, rồi gõ yêu cầu và gửi (Bokin tự lấy vùng vừa tô).']);
+  } else if (sel) {
+    const size = `${Math.round(sel.width)}×${Math.round(sel.height)} px`;
+    lines.push(['', state.aiEnabled
+      ? `Đang có vùng chọn ${size}. Ví dụ: "xoá vật thể trong vùng chọn", "thêm một chậu cây vào đây", "chỉnh màu vùng này ấm hơn".`
+      : `Đang có vùng chọn ${size}: gõ "làm vùng này ấm hơn", "đổi vùng này sang xanh navy"… chỉ vùng này được chỉnh.`]);
   }
-  const size = `${Math.round(sel.width)}×${Math.round(sel.height)} px`;
-  hint.textContent = state.aiEnabled
-    ? `Đang có vùng chọn ${size}. Ví dụ: "xoá vật thể trong vùng chọn", "thêm một chậu cây vào đây", "chỉnh màu vùng này ấm hơn".`
-    : `Đang có vùng chọn ${size}: các chỉnh sửa (màu, sáng, bộ lọc…) sẽ chỉ áp dụng trong vùng này.`;
-  hint.hidden = false;
+  if (color) lines.push([color, `Màu vừa hút ${color}: gõ "đổi màu này thành…", "chọn mọi chỗ màu này".`]);
+  hint.replaceChildren(...lines.map(([swatch, text]) => {
+    const row = make('div');
+    if (swatch) {
+      const s = make('span', 'swatch');
+      s.style.background = swatch;
+      row.append(s);
+    }
+    row.append(text);
+    return row;
+  }));
+  hint.hidden = !lines.length;
+  // Hướng dẫn của nút chọn vùng vừa bấm: ẩn khi người dùng đã khoanh / tô / hút được (dòng trên đổi).
+  const key = JSON.stringify(lines);
+  if (key !== hintKey && lines.length) $('chat-region-info').hidden = true;
+  hintKey = key;
 }
+let hintKey = '';
 
 function setBusy(busy) {
   state.busy = busy;
   if (busy) state.stopRequested = false;
   els.send.disabled = busy;
   els.stop.hidden = !busy;
+  strip.setDisabled(busy);
+  for (const b of $('chat-region').querySelectorAll('button')) b.disabled = busy;
   els.input.placeholder = busy ? 'Bokin đang làm…' : 'Ví dụ: tăng độ sáng 20%, làm nét ảnh, thêm viền trắng 40px…';
 }
 
@@ -527,7 +800,12 @@ async function openFile(file) {
     await bridge.openFile(await file.arrayBuffer(), file.name);
     runner.undoDepth = 0;
     runner.picking = false;
-    runner.areaEdits.clear();
+    runner.forgetAreaEdits();
+    state.lastAreaEdit = null;
+    // Các bước đã làm với ảnh vừa rồi thành "ảnh trước" (ảnh vừa rồi chưa chỉnh gì thì giữ công thức cũ hơn).
+    const steps = recipe.live();
+    if (steps.length) state.previousRecipe = { image: recipe.image ?? 'ảnh trước', items: steps };
+    recipe.restart(file.name);
     log.reset();
     await log.markOrigin();
     colorPanel.reset();
@@ -536,15 +814,48 @@ async function openFile(file) {
     const hadConversation = state.messages.length > 0;
     if (hadConversation) resetConversation();
     addNote('opened-file', `(Ghi chú hệ thống: người dùng vừa mở ảnh "${file.name}" trong Photopea; đây là tài liệu đang hoạt động.)`);
+    if (state.previousRecipe) addNote('previous', previousNote(state.previousRecipe));
     renderInfo(hadConversation
       ? `Đã mở ảnh: ${file.name}. Bắt đầu cuộc trò chuyện mới cho ảnh này (không gửi lại lịch sử ảnh cũ, đỡ tốn phí).`
       : `Đã mở ảnh: ${file.name}`);
+    if (state.previousRecipe) renderAgain(state.previousRecipe);
     setStatus('Photopea đã sẵn sàng', 'ok');
     refreshUi();
   } catch (error) {
     renderError(error.message);
     setStatus('Photopea đã sẵn sàng', 'ok');
   }
+}
+
+/** Ghi chú cho Claude: các bước đã làm với ảnh trước, để "làm giống ảnh trước" trên ảnh vừa mở. */
+function previousNote(prev) {
+  const lines = [];
+  let size = 0;
+  for (const [i, item] of prev.items.entries()) {
+    const steps = item.steps.map((s) => `${s.tool} ${JSON.stringify(s.input)}`).join('; ');
+    const line = `${i + 1}. "${item.text}": ${steps}`;
+    size += line.length;
+    lines.push(size > 6000 ? `${i + 1}. "${item.text}" (bỏ bớt chi tiết cho gọn)` : line);
+  }
+  return `(Ghi chú hệ thống: các bước đã làm với ảnh trước "${prev.image}" (bỏ các bước đã hoàn tác):\n${lines.join('\n')}\n`
+    + 'Nếu người dùng muốn làm giống ảnh trước ("làm giống ảnh trước", "như ảnh vừa rồi"), làm lại các bước này trên ảnh '
+    + 'đang mở: cùng công cụ và giá trị; vùng chọn người dùng tự khoanh trên ảnh cũ không còn, hãy tự chọn vùng tương ứng '
+    + 'trên ảnh này. Nếu không, bỏ qua ghi chú này.)';
+}
+
+/** Nút "↻ Làm giống ảnh trước" ngay sau dòng "Đã mở ảnh". */
+function renderAgain(prev) {
+  const box = make('div', 'followups again');
+  const b = make('button', '', `↻ Làm giống ảnh trước (${prev.items.length} thao tác)`);
+  b.type = 'button';
+  b.title = prev.items.map((i) => `• ${i.text}`).join('\n');
+  b.addEventListener('click', () => {
+    if (isBusy()) return;
+    box.remove();
+    send('Làm giống ảnh trước');
+  });
+  box.append(b);
+  append(box);
 }
 
 els.downloadBtn.addEventListener('click', (e) => {
@@ -721,6 +1032,9 @@ async function refreshUi() {
   for (const id of ['undo-btn', 'redo-btn', 'compare-btn', 'download-btn']) $(id).disabled = !hasDoc;
   fillPanel.refresh();
   colorPanel.refresh();
+  strip.refresh();
+  if (hasDoc) updateSelectionHint();
+  else $('selection-hint').hidden = true;
 }
 
 let refreshTimer = null;
@@ -743,9 +1057,18 @@ function showToast(text, kind = '') {
 }
 
 // ───────────────────────────── Hiển thị ─────────────────────────────
+// Đang xem cuối cuộc trò chuyện thì giữ ở cuối cả khi khung chat bị thu lại (dòng gợi ý, hàng chọn vùng hiện ra).
+let chatAtEnd = true;
+els.chat.addEventListener('scroll', () => {
+  chatAtEnd = els.chat.scrollTop + els.chat.clientHeight >= els.chat.scrollHeight - 30;
+});
+new ResizeObserver(() => {
+  if (chatAtEnd) els.chat.scrollTop = els.chat.scrollHeight;
+}).observe(els.chat);
+
 function append(el) {
   // Ghi chú hệ thống (vd. "Đã mở ảnh") không che các gợi ý: người dùng cần gợi ý nhất ngay sau khi mở ảnh.
-  if (!el.classList.contains('info')) els.empty.hidden = true;
+  if (!el.classList.contains('info') && !el.classList.contains('again')) els.empty.hidden = true;
   els.chat.append(el);
   els.chat.scrollTop = els.chat.scrollHeight;
   return el;
@@ -759,7 +1082,27 @@ function make(tag, className, text) {
 }
 
 function renderUser(text) {
-  append(make('div', 'msg user', text));
+  const el = make('div', 'msg user', text);
+  const star = make('button', 'save');
+  star.type = 'button';
+  star.dataset.text = text;
+  star.addEventListener('click', () => (saved.has(text) ? saved.remove(text) : saved.add(text)));
+  markSaved(star);
+  el.append(star);
+  append(el);
+}
+
+function markSaved(star) {
+  const on = saved.has(star.dataset.text);
+  star.classList.toggle('on', on);
+  star.textContent = on ? '★' : '☆';
+  star.title = on ? 'Bỏ khỏi lệnh đã lưu' : 'Lưu lệnh này để dùng lại (nút ⭐ Đã lưu)';
+  star.setAttribute('aria-label', star.title);
+}
+
+/** Kết quả của một lệnh Bokin làm ngay (không gọi Claude). */
+function renderQuick(text) {
+  return append(make('div', 'msg quick', text));
 }
 
 function renderAssistant(text) {

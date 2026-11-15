@@ -9,6 +9,24 @@ import { hexToRgb } from './shared/script-kit.js';
 const MIME = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', psd: 'image/vnd.adobe.photoshop' };
 const MATCH_LAYER = 'Màu theo ảnh mẫu';
 const AREA_PREFIX = 'Chỉnh: '; // lớp của adjust_area
+const AREA_VALUES = ['brightness', 'contrast', 'warmth', 'tint', 'saturation', 'hue_shift'];
+// Đọc lịch sử của tài liệu: số bước, bước đang đứng, và mã riêng (tăng dần, không bao giờ dùng lại) của từng bước.
+// Photopea chỉ giữ 20 bước gần nhất: khi đã đủ 20, số bước không tăng nữa nên chỉ đếm bước là không đủ. Mã riêng
+// được gắn vào chính các bước lịch sử bên trong Photopea (đối tượng tài liệu nằm sau lớp script). Nếu Photopea đổi
+// cấu trúc bên trong thì chỉ còn số bước (__HL__) và Bokin quay về cách đếm cũ (runner.undoDepth).
+const HISTORY_INFO = `if (app.documents.length) {
+var __d = app.activeDocument; var __len = __d.historyStates.length; app.echoToOE('__HL__' + __len);
+var __keys = Object.keys(__d); var __int = null;
+for (var __i = 0; __i < __keys.length; __i++) { var __pd = Object.getOwnPropertyDescriptor(__d, __keys[__i]); var __v = __pd ? __pd.value : null;
+  if (__v && typeof __v === 'object' && Object.prototype.toString.call(__v.history) === '[object Array]' && __v.history.length === __len) { __int = __v; } }
+var __ah = __d.activeHistoryState; var __apd = __ah ? Object.getOwnPropertyDescriptor(__ah, 'Hl') : null; var __at = __apd ? __apd.value : -1;
+if (__int && typeof __at === 'number' && __at >= 0 && __at < __len) {
+  if (typeof window.__bokinSeq !== 'number') { window.__bokinSeq = 0; }
+  var __ids = [];
+  for (var __j = 0; __j < __len; __j++) { var __st = __int.history[__j];
+    if (!__st.__bokinId) { window.__bokinSeq = window.__bokinSeq + 1; __st.__bokinId = window.__bokinSeq; } __ids.push(__st.__bokinId); }
+  app.echoToOE('__HI__' + __at + '|' + __ids.join(','));
+} }`;
 // select_area đổi mép vùng chọn đang có (cần có vùng chọn: Photopea dừng script nếu không có).
 const EDGE_MODES = { soften: 'làm mềm mép', expand: 'nới rộng', contract: 'thu hẹp' };
 // Bật / tắt Quick Mask của Photopea (cùng một lệnh).
@@ -34,10 +52,12 @@ export class ToolRunner {
     this.reference = null;
     // Đang "tô vùng" (Quick Mask của Photopea) bằng nút của Bokin; onPaintChange(on) báo cho giao diện.
     this.painting = false;
-    // Các lần chỉnh vùng (adjust_area) theo tên: giá trị đang áp, để Claude sửa lại ("mạnh hơn") và giao diện liệt kê.
-    this.areaEdits = new Map();
+    // Các phiên bản của mỗi lần chỉnh vùng (adjust_area), kèm vị trí lịch sử Photopea lúc làm: sau khi Hoàn tác vẫn
+    // biết đúng giá trị đang áp (areaEditList), để Claude sửa lại ("mạnh hơn") và thanh "Đã chỉnh" liệt kê.
+    this.areaHistory = [];
     // Người dùng vừa bấm "Hút màu": màu tiền cảnh của Photopea là màu họ chỉ (picked_color trong thông tin ảnh).
     this.picking = false;
+    this.pickFrom = null; // màu tiền cảnh lúc bấm "Hút màu"
   }
 
   /** Đặt ảnh mẫu (File/Blob ảnh): tính thống kê màu trên bản thu nhỏ, giữ ảnh nhỏ để hiện và gửi Claude. */
@@ -102,6 +122,106 @@ app.echoToOE('painting');`);
     return sel ? ok(JSON.stringify({ selection: sel })) : fail('Chưa tô vùng nào.');
   }
 
+  /** Quên mọi lần chỉnh vùng (mở hay tạo ảnh khác). */
+  forgetAreaEdits() {
+    this.areaHistory = [];
+  }
+
+  /**
+   * Lịch sử của tài liệu đang mở: { len, index (bước đang đứng), id (mã của bước đó), ids, exact } hoặc null nếu chưa
+   * mở ảnh. exact = false: không đọc được mã riêng, id là chỉ số bước (đúng tới khi Photopea bỏ bớt bước cũ).
+   */
+  async historyInfo() {
+    const r = await this.bridge.exec(HISTORY_INFO);
+    const base = r.echoes.find((e) => e.startsWith('__HL__'));
+    if (!base) return null;
+    const len = Number(base.slice(6));
+    const line = r.echoes.find((e) => e.startsWith('__HI__'));
+    if (line) {
+      const [at, list] = line.slice(6).split('|');
+      const ids = list.split(',').map(Number);
+      const index = Number(at);
+      if (ids.length === len && index >= 0 && index < len && ids.every(Number.isFinite)) {
+        this.undoDepth = len - 1 - index; // cũng đúng khi người dùng tự Ctrl+Z trong Photopea
+        return { len, index, id: ids[index], ids, exact: true };
+      }
+    }
+    const index = Math.max(0, len - 1 - this.undoDepth);
+    return { len, index, id: index, ids: null, exact: false };
+  }
+
+  /** Vị trí lịch sử hiện tại (mã của bước đang đứng; như ActionLog.position), hoặc null nếu chưa mở ảnh. */
+  async _position() {
+    return (await this.historyInfo())?.id ?? null;
+  }
+
+  /**
+   * Về đúng bước lịch sử có mã `id` (hoàn tác / làm lại cả một thao tác). Lỗi nếu bước đó không còn: Photopea đã
+   * bỏ bước cũ (chỉ giữ 20 bước), hoặc bước đó đã bị thay bởi chỉnh sửa mới.
+   */
+  async gotoHistory(id) {
+    const info = await this.historyInfo();
+    if (!info) return fail('Chưa có ảnh nào đang mở.');
+    const index = info.exact ? info.ids.indexOf(id) : id;
+    if (index < 0 || index >= info.len) {
+      return fail('Không hoàn tác được trọn thao tác này: Photopea chỉ giữ 20 bước gần nhất mà thao tác này dài hơn. '
+        + 'Lần chỉnh vùng thì bỏ ở thanh "Đã chỉnh"; hoặc dùng bảng Lịch sử (History) của Photopea.');
+    }
+    if (index === info.index) return ok(JSON.stringify({ history_steps: info.len, now_at_step: index + 1 }));
+    const r = await this._runWrapped(wrap(`doc.activeHistoryState = doc.historyStates[${index}];
+__ok({ history_steps: doc.historyStates.length, now_at_step: ${index + 1} });`));
+    if (!r.isError) this.undoDepth = info.len - 1 - index;
+    return r;
+  }
+
+  /**
+   * Các lần chỉnh vùng đang có trong ảnh (lớp "Chỉnh: <tên>" còn đó), mỗi tên một mục với giá trị đang áp (phiên
+   * bản mới nhất chưa bị hoàn tác) và visible; lần chỉnh gần nhất đứng cuối.
+   */
+  async areaEditList() {
+    if (!this.areaHistory.length) return [];
+    const r = await this.bridge.exec(`if (app.documents.length) {
+var __walk = function (c) { for (var i = 0; i < c.layers.length; i++) { var L = c.layers[i];
+  if (L.name.indexOf(${JSON.stringify(AREA_PREFIX)}) === 0) { app.echoToOE('__A__' + (L.visible ? '1' : '0') + L.name); }
+  if (L.layers) { __walk(L); } } };
+__walk(app.activeDocument); }`);
+    const present = new Map(r.echoes.filter((e) => e.startsWith('__A__')).map((e) => [e.slice(6), e[5] === '1']));
+    if (!present.size) return [];
+    const info = await this.historyInfo();
+    const latest = new Map();
+    for (const v of this.areaHistory) {
+      if (info && v.at > info.id) continue; // đã hoàn tác
+      // Bước của phiên bản này đã bị thay bởi chỉnh sửa khác sau khi hoàn tác (vẫn tính nếu chỉ là bước cũ đã bị bỏ).
+      if (info?.exact && v.at >= info.ids[0] && !info.ids.includes(v.at)) continue;
+      if (!present.has(v.layer)) continue;
+      const old = latest.get(v.name);
+      if (!old || v.at >= old.at) latest.set(v.name, v);
+    }
+    return [...latest.values()].sort((a, b) => a.at - b.at).map(({ at, ...v }) => ({ ...v, visible: present.get(v.layer) }));
+  }
+
+  /** Đổi mức (strength, %) của một lần chỉnh vùng: làm lại đúng vùng cũ với cùng giá trị. */
+  async rescaleAreaEdit(name, strength) {
+    const edit = (await this.areaEditList()).find((e) => e.name === name);
+    if (!edit) return fail(`Không còn lần chỉnh "${name}".`);
+    const input = { name, strength: Math.round(Math.min(200, Math.max(10, strength))), use_selection: false };
+    for (const k of AREA_VALUES) if (edit[k] !== undefined) input[k] = edit[k];
+    if (edit.target_color) input.target_color = edit.target_color;
+    return this.execute('adjust_area', input);
+  }
+
+  /** Ẩn / hiện lớp của một lần chỉnh vùng (so sánh riêng lần chỉnh đó). */
+  async setAreaEditVisible(name, visible) {
+    const before = await this._position();
+    const out = await this._runWrapped(wrap(`var L = __findLayer(doc, ${JSON.stringify(AREA_PREFIX + name)});
+if (!L) { __fail('Không còn lớp này.'); return; }
+L.visible = ${visible ? 'true' : 'false'};
+__ok({ layer: L.name, visible: L.visible });`));
+    // Nếu Photopea ghi việc ẩn / hiện thành một bước lịch sử thì các bước "làm lại" phía sau đã bị cắt.
+    if (!out.isError && (await this._position()) !== before) this.undoDepth = 0;
+    return out;
+  }
+
   async _hasDocument() {
     const r = await this.bridge.exec("app.echoToOE('__N__' + app.documents.length);");
     return Number((r.echoes.find((e) => e.startsWith('__N__')) ?? '__N__0').slice(5)) > 0;
@@ -115,7 +235,7 @@ app.echoToOE('painting');`);
   async execute(name, input = {}) {
     const outcome = await this._execute(name, input);
     try {
-      await this.onExecuted?.(name, outcome);
+      await this.onExecuted?.(name, outcome, input);
     } catch { /* lỗi giao diện không được làm hỏng kết quả tool */ }
     return outcome;
   }
@@ -159,10 +279,9 @@ app.echoToOE('painting');`);
         data.selection = this.painting ? null : await this._selectionBounds();
         if (this.painting) data.painting_selection = true;
         if (this.reference) data.reference_image = { name: this.reference.name, colors: this.reference.colors };
-        const names = new Set((data.layers ?? []).map((l) => l.name));
-        const edits = [...this.areaEdits.values()].filter((e) => names.has(e.layer));
-        if (edits.length) data.area_edits = edits;
-        const picked = this.picking ? await this.pickedColor() : null;
+        const edits = await this.areaEditList();
+        if (edits.length) data.area_edits = edits.map(({ visible, ...e }) => (visible ? e : { ...e, hidden: true }));
+        const picked = await this.pickedColorIfAny();
         if (picked) data.picked_color = picked;
         result = ok(JSON.stringify(data));
       }
@@ -250,6 +369,7 @@ __ok({ bounds: __bounds(L) });`));
 
   /** steps > 0: hoàn tác; steps < 0: làm lại. */
   async _history(steps) {
+    await this.historyInfo(); // undoDepth đúng cả khi người dùng tự hoàn tác trong Photopea
     const target = this.undoDepth + steps;
     if (steps < 0 && this.undoDepth === 0) return fail('Không có bước nào để làm lại.');
     const depth = Math.max(0, target);
@@ -546,6 +666,19 @@ __ok({});`));
     }
   }
 
+  /** Người dùng vừa bấm "Hút màu": nhớ màu tiền cảnh lúc này, để chỉ báo màu khi họ đã thật sự hút một màu khác. */
+  async startPicking() {
+    this.picking = true;
+    this.pickFrom = await this.pickedColor().catch(() => null);
+  }
+
+  /** Màu vừa hút (#RRGGBB) nếu đang hút màu và đã hút được một màu, không thì null. */
+  async pickedColorIfAny() {
+    if (!this.picking) return null;
+    const color = await this.pickedColor();
+    return color && color !== this.pickFrom ? color : null;
+  }
+
   /** Màu tiền cảnh của Photopea (màu vừa hút bằng công cụ Hút màu), dạng #RRGGBB. */
   async pickedColor() {
     const r = await this.bridge.exec("app.echoToOE('__FG__' + app.foregroundColor.rgb.hexValue);");
@@ -560,8 +693,10 @@ __ok({});`));
   async _adjustArea(input) {
     const name = String(input.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40) || 'Vùng chọn';
     const layer = `${AREA_PREFIX}${name}`;
+    const strength = input.strength === undefined ? 100 : Math.round(Math.min(200, Math.max(10, Number(input.strength) || 100)));
+    const before = await this._position();
     const values = {};
-    for (const k of ['brightness', 'contrast', 'warmth', 'tint', 'saturation', 'hue_shift']) {
+    for (const k of AREA_VALUES) {
       if (Number(input[k])) values[k] = Math.round(Number(input[k]));
     }
     let target = null;
@@ -608,7 +743,7 @@ __ok({});`));
       if (saved && !weights) return fail('Không đọc được hình dạng vùng chọn.');
       const stats = labStats(image.data, { weights });
       if (!stats) return fail('Vùng chọn trống.');
-      adjustColors(image.data, stats, { ...values, target });
+      adjustColors(image.data, stats, { ...values, target, amount: strength / 100 });
       // Vùng chọn thành độ trong suốt của lớp: mép mềm giữ nguyên, và lần sau lấy lại được đúng vùng này.
       if (weights) for (let i = 0; i < weights.length; i++) image.data[i * 4 + 3] = Math.round(image.data[i * 4 + 3] * weights[i] / 255);
       ctx.putImageData(image, 0, 0);
@@ -616,9 +751,11 @@ __ok({});`));
       const placed = await this._placeImageAsLayer(await blob.arrayBuffer(), rect, layer);
       if (placed.isError) return placed;
       this.undoDepth = 0;
-      const edit = { name, layer, ...values };
-      this.areaEdits.delete(name); // lần chỉnh mới nhất đứng cuối danh sách
-      this.areaEdits.set(name, edit);
+      const edit = { name, layer, ...values, ...(strength !== 100 ? { strength } : {}) };
+      // Phiên bản bị hoàn tác trước lần chỉnh này không bao giờ quay lại được (lịch sử phía sau đã bị cắt).
+      const at = await this._position();
+      this.areaHistory = this.areaHistory.filter((v) => before === null || v.at <= before);
+      this.areaHistory.push({ ...edit, at: at ?? 0 });
       return ok(JSON.stringify({
         ...edit, area, replaced: exists, bounds: rect,
         note: 'Gọi lại adjust_area cùng tên với giá trị mới để chỉnh thêm (thay lần này); xoá lớp để bỏ.',

@@ -92,6 +92,11 @@
           <span class="cost-total" id="cost-total"></span>
           <button type="button" class="btn ghost small" id="new-chat-btn" title="Xoá cuộc trò chuyện, giữ nguyên ảnh">Trò chuyện mới</button>
         </div>
+        <!-- Các lần chỉnh vùng đang có: kéo đổi mức, ẩn để so sánh, bỏ (không gọi AI) -->
+        <section class="edits" id="edits" aria-label="Các lần chỉnh vùng" hidden>
+          <div class="edits-head"><span>Đã chỉnh</span><span class="muted">kéo để đổi mức · không tốn phí</span></div>
+          <div class="edits-list" id="edits-list"></div>
+        </section>
         <section class="chat" id="chat" aria-live="polite">
           <div class="empty" id="empty">
             <h2>Chỉnh ảnh bằng câu lệnh</h2>
@@ -104,9 +109,23 @@
               <button type="button">Đổi màu tôi vừa hút thành xanh navy, giữ nếp vải</button>
               <button type="button">Thêm chữ "GIẢM 50%" màu đỏ ở góc trên bên phải</button>
             </div>
+            <div class="saved-group" id="saved-group" hidden>
+              <h3 class="section-title">Lệnh bạn đã lưu</h3>
+              <div class="suggestions"></div>
+            </div>
+            <p class="muted small quick-tip">Câu ngắn như <strong>hoàn tác</strong>, <strong>mạnh hơn</strong>, <strong>bỏ chỉnh áo</strong>,
+              <strong>tải ảnh png</strong> Bokin làm ngay ⚡, không tốn phí.</p>
           </div>
         </section>
         <form class="composer" id="composer">
+          <div class="select-tools chat-region" id="chat-region" role="toolbar" aria-label="Chọn vùng cần chỉnh">
+            <button type="button" data-paint title="Tô bằng cọ lên vùng cần chỉnh">🖌 Tô vùng</button>
+            <button type="button" data-tool="lassoTool" title="Vẽ tự do quanh vùng">Lasso</button>
+            <button type="button" data-tool="quickSelectTool" title="Tô lên vật thể, Photopea tự bắt viền">Chọn nhanh</button>
+            <button type="button" data-tool="eyedropperTool" title="Bấm vào một màu trên ảnh, rồi gõ: đổi màu này thành…">💧 Hút màu</button>
+            <button type="button" data-select="none" title="Bỏ vùng chọn: chỉnh cả ảnh">Bỏ chọn</button>
+          </div>
+          <div class="fill-selection chat-region-info" id="chat-region-info" hidden></div>
           <div class="selection-hint" id="selection-hint" hidden></div>
           <div class="ref-chip" id="ref-chip" hidden>
             <img id="ref-chip-thumb" alt="" />
@@ -116,7 +135,12 @@
           <textarea id="input" rows="2" placeholder="Ví dụ: tăng độ sáng 20%, làm nét ảnh, thêm viền trắng 40px…" aria-label="Yêu cầu chỉnh ảnh"></textarea>
           <div class="composer-actions">
             <button type="button" class="btn ghost small" id="ref-btn" title="Đính kèm ảnh mẫu: AI chỉnh màu vùng chọn giống ảnh đó">🖼 Ảnh mẫu</button>
-            <span class="hint">Enter để gửi · Shift+Enter xuống dòng</span>
+            <div class="menu">
+              <button type="button" class="btn ghost small" id="saved-btn" aria-haspopup="true" aria-expanded="false" title="Lệnh đã lưu">⭐ Đã lưu</button>
+              <div class="menu-list saved-menu" id="saved-menu" hidden></div>
+            </div>
+            <button type="button" class="btn ghost small mic" id="mic-btn" hidden>🎤</button>
+            <span class="hint" title="Enter để gửi · Shift+Enter xuống dòng · ↑ gọi lại câu đã gửi · phím / để gõ">Enter gửi · ↑ câu trước</span>
             <button type="button" class="btn danger" id="stop-btn" hidden>Dừng</button>
             <button type="submit" class="btn primary" id="send-btn">Gửi</button>
           </div>

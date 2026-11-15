@@ -573,7 +573,9 @@ __ok({ layer: layer.name, preset: ${lit(preset)}, strength: ${num(strength)}, hi
       'the user picked with the eyedropper). Values (optional, default 0, -100..100): brightness, contrast, warmth ' +
       '(+ warmer/yellower, − cooler/bluer), tint (+ magenta/pink, − green), saturation (−100 = gray); hue_shift in ' +
       'degrees; target_color #RRGGBB recolors the area to that color keeping its light and shadow (change a red shirt to ' +
-      'navy) and can be combined with the others. Typical steps: 10-25 subtle, 30-50 clear.',
+      'navy) and can be combined with the others. Typical steps: 10-25 subtle, 30-50 clear. strength (%, default 100, ' +
+      '10-200) scales all of them (with target_color, 50 = halfway to that color); the user can drag it on Bokin\'s ' +
+      '"Đã chỉnh" slider, and area_edits shows it when it is not 100: keep it when re-calling, or fold it into new values.',
     input_schema: {
       type: 'object',
       properties: {
@@ -585,6 +587,7 @@ __ok({ layer: layer.name, preset: ${lit(preset)}, strength: ${num(strength)}, hi
         saturation: { type: 'number', minimum: -100, maximum: 100, description: '−100 = đen trắng.' },
         hue_shift: { type: 'number', minimum: -180, maximum: 180, description: 'Xoay tông màu (độ).' },
         target_color: COLOR_PARAM('Đổi cả vùng sang màu này, giữ sáng tối.'),
+        strength: { type: 'number', minimum: 10, maximum: 200, description: 'Mức áp các giá trị, % (mặc định 100).' },
         use_selection: { type: 'boolean', description: 'Dùng vùng chọn hiện tại (mặc định true).' },
       },
       required: ['name'],

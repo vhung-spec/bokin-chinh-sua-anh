@@ -342,12 +342,15 @@ test('sau câu trả lời có chỉnh sửa: nút gợi ý; "Hoàn tác" gỡ M
   assert.deepEqual(await page.locator('.followups button').allTextContents(), ['Mạnh hơn', 'Nhẹ hơn', 'Hoàn tác', 'Tải JPG']);
   assert.notDeepEqual(await px(), before);
 
+  const calls = requests.length;
   await page.click('.followups button:has-text("Hoàn tác")');
+  await page.waitForSelector('.msg.quick >> text=Đã hoàn tác');
   await page.waitForFunction(() => !window.bokin.state.toolbarBusy);
   assert.deepEqual(await px(), before, 'cả 2 chỉnh sửa được gỡ trong một lần bấm');
-  assert.match(await page.textContent('#toast'), /Đã hoàn tác yêu cầu "Sáng hơn và bớt màu"/);
+  assert.match(await page.locator('.msg.quick').last().textContent(), /Đã hoàn tác yêu cầu "Sáng hơn và bớt màu"/);
+  assert.equal(requests.length, calls, 'Bokin tự làm, không gọi Claude');
   const notes = await page.evaluate(() => window.bokin.state.pendingNotes.map((n) => n.text).join(' '));
-  assert.match(notes, /Hoàn tác/, 'báo cho Claude biết');
+  assert.match(notes, /hoàn tác/i, 'báo cho Claude biết');
 
   // Phím tắt Ctrl+Y (ngoài ô nhập) = làm lại
   await page.evaluate(() => document.activeElement?.blur());

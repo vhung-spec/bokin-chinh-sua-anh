@@ -105,3 +105,25 @@ test('adjustColors: sáng hơn, ấm hơn, bớt rực về xám, xoay tông, đ
   adjustColors(two, s0, { contrast: 50 });
   assert.ok(labStats(two).std[0] > s0.std[0] * 1.4, 'tương phản tăng');
 });
+
+test('adjustColors: amount co giãn mọi giá trị (nửa đường tới màu đích, gấp đôi độ sáng)', async () => {
+  const { adjustColors } = await import('../../shared/color-transfer.js');
+  const lab = (d) => rgbToLab(d[0], d[1], d[2]);
+  const red = [200, 40, 40];
+  const navy = rgbToLab(30, 50, 120);
+  const half = solid(4, red);
+  adjustColors(half, labStats(half), { target: [30, 50, 120], amount: 0.5 });
+  const start = rgbToLab(...red);
+  lab(half).forEach((v, c) => near(v, (start[c] + navy[c]) / 2, 3, `kênh ${c} nằm giữa màu cũ và màu đích`));
+
+  const once = solid(4, [100, 100, 100]);
+  const twice = solid(4, [100, 100, 100]);
+  adjustColors(once, labStats(once), { brightness: 20 });
+  adjustColors(twice, labStats(twice), { brightness: 20, amount: 2 });
+  const L0 = rgbToLab(100, 100, 100)[0];
+  near(lab(twice)[0] - L0, (lab(once)[0] - L0) * 2, 0.6, 'amount 2 = sáng gấp đôi');
+
+  const none = solid(4, [120, 90, 60]);
+  adjustColors(none, labStats(none), { warmth: 50, saturation: -40, target: [0, 0, 255], amount: 0 });
+  assert.deepEqual([...none.slice(0, 3)], [120, 90, 60], 'amount 0 = không đổi');
+});

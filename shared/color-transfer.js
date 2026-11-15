@@ -125,20 +125,23 @@ export function describeStats(stats) {
  * @param {Uint8ClampedArray} rgba
  * @param {{ mean: number[] }} stats - thống kê của vùng (labStats): tâm của tương phản, gốc khi đổi sang màu đích
  * @param {{ brightness?: number, contrast?: number, warmth?: number, tint?: number, saturation?: number,
- *   hue_shift?: number, target?: number[] | null }} p - target: [r, g, b] màu đích (đổi màu vật, giữ sáng tối)
+ *   hue_shift?: number, target?: number[] | null, amount?: number }} p - target: [r, g, b] màu đích (đổi màu vật,
+ *   giữ sáng tối); amount: mức áp mọi giá trị (1 = đúng giá trị, 0,5 = một nửa, 2 = gấp đôi; với màu đích: 0,5 = nửa
+ *   đường tới màu đích)
  */
 export function adjustColors(rgba, stats, p) {
+  const k = Math.max(0, p.amount ?? 1);
   const target = p.target ? rgbToLab(...p.target) : null;
   // Đổi sang màu đích: dời trung bình L, a, b của vùng về màu đích, giữ nguyên chênh lệch từng điểm (nếp, bóng).
-  const shift = target ? [target[0] - stats.mean[0], target[1] - stats.mean[1], target[2] - stats.mean[2]] : [0, 0, 0];
-  const pivot = target ? target[0] : stats.mean[0];
-  const contrast = 1 + (p.contrast ?? 0) / 100;
-  const lift = (p.brightness ?? 0) * 0.35;
-  const sat = Math.max(0, 1 + (p.saturation ?? 0) / 100);
-  const angle = ((p.hue_shift ?? 0) * Math.PI) / 180;
+  const shift = target ? [0, 1, 2].map((c) => (target[c] - stats.mean[c]) * k) : [0, 0, 0];
+  const pivot = stats.mean[0] + shift[0];
+  const contrast = Math.max(0, 1 + ((p.contrast ?? 0) / 100) * k);
+  const lift = (p.brightness ?? 0) * 0.35 * k;
+  const sat = Math.max(0, 1 + ((p.saturation ?? 0) / 100) * k);
+  const angle = ((p.hue_shift ?? 0) * k * Math.PI) / 180;
   const cos = Math.cos(angle), sin = Math.sin(angle);
-  const warm = (p.warmth ?? 0) * 0.3;
-  const tint = (p.tint ?? 0) * 0.3 + (p.warmth ?? 0) * 0.04;
+  const warm = (p.warmth ?? 0) * 0.3 * k;
+  const tint = ((p.tint ?? 0) * 0.3 + (p.warmth ?? 0) * 0.04) * k;
   for (let i = 0; i < rgba.length; i += 4) {
     let [L, a, b] = rgbToLab(rgba[i], rgba[i + 1], rgba[i + 2]);
     L += shift[0];

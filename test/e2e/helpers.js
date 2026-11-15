@@ -10,10 +10,11 @@ export async function startServer(options) {
   return { server, url: `http://127.0.0.1:${server.address().port}` };
 }
 
-export async function openApp(url, { viewport = { width: 1440, height: 900 }, deviceScaleFactor = 1 } = {}) {
+export async function openApp(url, { viewport = { width: 1440, height: 900 }, deviceScaleFactor = 1, init = null } = {}) {
   const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
   const browser = await chromium.launch(proxy ? { proxy: { server: proxy, bypass: 'localhost,127.0.0.1' } } : {});
-  const page = await browser.newPage({ viewport, deviceScaleFactor });
+  const page = await browser.newPage({ viewport, deviceScaleFactor, acceptDownloads: true });
+  if (init) await page.addInitScript(init);
   const pageErrors = [];
   page.on('pageerror', (e) => {
     // Bỏ qua lỗi nội bộ của Photopea (trong iframe); chỉ quan tâm lỗi từ mã của Bokin.

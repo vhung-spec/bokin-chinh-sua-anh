@@ -52,7 +52,7 @@ export function syncPaintButtons(on) {
  * Hàng nút khoanh vùng: data-tool = đổi công cụ chọn của Photopea, data-select = select_area (invert, none),
  * data-paint = Tô vùng (Quick Mask: tô bằng cọ, bấm lần nữa là xong).
  */
-function bindSelectTools(container, info, { runner, bridge, isBusy, onChange, setStatus }) {
+export function bindSelectTools(container, info, { runner, bridge, isBusy, onChange, setStatus }) {
   container.addEventListener('click', async (e) => {
     const button = e.target.closest('button');
     if (!button || isBusy()) return;
@@ -62,6 +62,7 @@ function bindSelectTools(container, info, { runner, bridge, isBusy, onChange, se
       if (runner.painting) {
         info.textContent = PAINT_HINT;
         info.className = 'fill-selection';
+        info.hidden = false;
         return;
       }
       await onChange();
@@ -69,11 +70,12 @@ function bindSelectTools(container, info, { runner, bridge, isBusy, onChange, se
     }
     if (runner.painting) await runner.finishPaint();
     if (button.dataset.tool) {
-      if (button.dataset.tool === 'eyedropperTool') runner.picking = true;
+      if (button.dataset.tool === 'eyedropperTool') await runner.startPicking();
       const r = await bridge.exec(`${AM} var d = new ActionDescriptor(); var r = new ActionReference(); r.putClass(_s(${JSON.stringify(button.dataset.tool)})); d.putReference(_c('null'), r); app.executeAction(_c('slct'), d, DialogModes.NO);`);
       for (const b of container.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b === button);
       info.textContent = r.completed ? SELECT_HINTS[button.dataset.tool] : 'Không đổi được công cụ; hãy chọn công cụ trực tiếp trong Photopea.';
       info.className = 'fill-selection';
+      info.hidden = false;
       return;
     }
     const out = await runner.execute('select_area', { mode: button.dataset.select });
@@ -245,7 +247,7 @@ export function setupColorPanel({ runner, bridge, log, isBusy, addNote, openImag
   const region = { tools: $('region-tools'), edge: $('region-edge'), info: $('region-info') };
   const picked = { box: $('picked'), swatch: $('picked-swatch'), text: $('picked-text'), select: $('picked-select') };
   async function refreshPicked() {
-    const color = runner.picking ? await runner.pickedColor().catch(() => null) : null;
+    const color = await runner.pickedColorIfAny().catch(() => null);
     picked.box.hidden = !color;
     if (!color) return;
     picked.swatch.style.background = color;

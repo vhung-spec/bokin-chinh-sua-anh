@@ -2,8 +2,9 @@
 // Một preset màu (2–3 bước), một lần Generative Fill (~10 bước), hay toàn bộ việc Claude làm cho một câu lệnh
 // được ghi thành một mục: bấm Hoàn tác một lần là gỡ cả cụm.
 //
-// Vị trí lịch sử hiện tại = số bước - 1 - runner.undoDepth (Photopea không cho đọc trực tiếp vị trí này).
-// Nếu người dùng tự bấm Ctrl+Z trong Photopea, vị trí có thể lệch: khi đó Bokin chỉ hoàn tác từng bước một.
+// Vị trí lịch sử = mã riêng của bước đang đứng (runner.historyInfo): tăng dần, không dùng lại, vẫn đúng khi Photopea
+// đã đủ 20 bước và bỏ bớt bước cũ, hay khi người dùng tự Ctrl+Z trong Photopea. Hoàn tác một thao tác = về đúng bước
+// trước nó (runner.gotoHistory), không đếm số bước.
 
 export class ActionLog {
   /**
@@ -18,16 +19,9 @@ export class ActionLog {
     this.origin = 0; // vị trí lịch sử của "ảnh gốc" (ảnh mới tạo có vài bước dựng nền trước đó)
   }
 
-  /** Số bước lịch sử của tài liệu đang mở, hoặc null nếu chưa mở ảnh. */
-  async historyLength() {
-    const r = await this.bridge.exec("if (app.documents.length) { app.echoToOE('__H__' + app.activeDocument.historyStates.length); }");
-    const line = r.echoes.find((e) => e.startsWith('__H__'));
-    return line ? Number(line.slice(5)) : null;
-  }
-
+  /** Mã của bước lịch sử đang đứng, hoặc null nếu chưa mở ảnh. */
   async position() {
-    const len = await this.historyLength();
-    return len === null ? null : len - 1 - this.runner.undoDepth;
+    return this.runner._position();
   }
 
   /** Mục mới nhất có thể hoàn tác. */
@@ -61,10 +55,12 @@ export class ActionLog {
   async undo() {
     const top = this.top();
     if (top && (await this.isCurrent(top))) {
+      const out = await this.runner.gotoHistory(top.before);
+      if (out.isError) return { ...out, label: top.label };
       this.undoStack.pop();
-      const out = await this.runner.execute('undo', { steps: top.after - top.before });
-      if (!out.isError) this.redoStack.push(top);
-      return { ...out, label: top.label };
+      this.redoStack.push(top);
+      await this.runner.onExecuted?.('undo', out, {});
+      return { ...out, label: top.label, entry: top };
     }
     return { ...(await this.runner.execute('undo', { steps: 1 })), label: null };
   }
@@ -73,10 +69,12 @@ export class ActionLog {
   async redo() {
     const top = this.redoStack.at(-1);
     if (top && (await this.position()) === top.before) {
+      const out = await this.runner.gotoHistory(top.after);
+      if (out.isError) return { ...out, label: top.label };
       this.redoStack.pop();
-      const out = await this.runner.execute('redo', { steps: top.after - top.before });
-      if (!out.isError) this.undoStack.push(top);
-      return { ...out, label: top.label };
+      this.undoStack.push(top);
+      await this.runner.onExecuted?.('redo', out, {});
+      return { ...out, label: top.label, entry: top };
     }
     return { ...(await this.runner.execute('redo', { steps: 1 })), label: null };
   }
@@ -97,16 +95,23 @@ export class ActionLog {
     this.origin = Math.max(0, (await this.position()) ?? 0);
   }
 
-  /** Tạm hiện ảnh gốc (lúc vừa mở / vừa tạo) để so sánh; gọi restore() để quay lại. */
+  /**
+   * Tạm hiện ảnh gốc (lúc vừa mở / vừa tạo) để so sánh; gọi restore() để quay lại. Bước gốc đã bị Photopea bỏ
+   * (quá 20 bước) thì hiện bước cũ nhất còn giữ.
+   */
   async showOriginal() {
-    const o = Math.floor(this.origin);
-    await this.bridge.exec(`if (app.documents.length) { var __hs = app.activeDocument.historyStates; app.activeDocument.activeHistoryState = __hs[Math.min(${o}, __hs.length - 1)]; }`);
+    const info = await this.runner.historyInfo();
+    if (!info) return;
+    this.comparingFrom = info.index;
+    let index = info.exact ? info.ids.indexOf(this.origin) : this.origin;
+    if (index < 0) index = info.exact && this.origin < info.ids[0] ? 0 : info.index;
+    await this.bridge.exec(`if (app.documents.length) { var __hs = app.activeDocument.historyStates; app.activeDocument.activeHistoryState = __hs[Math.min(${Math.floor(index)}, __hs.length - 1)]; }`);
   }
 
   async restore() {
-    const len = await this.historyLength();
-    if (len === null) return;
-    const idx = Math.max(0, len - 1 - this.runner.undoDepth);
-    await this.bridge.exec(`if (app.documents.length) { var __hs = app.activeDocument.historyStates; app.activeDocument.activeHistoryState = __hs[${idx}]; }`);
+    const index = this.comparingFrom;
+    this.comparingFrom = null;
+    if (index === null || index === undefined) return;
+    await this.bridge.exec(`if (app.documents.length) { var __hs = app.activeDocument.historyStates; app.activeDocument.activeHistoryState = __hs[Math.min(${index}, __hs.length - 1)]; }`);
   }
 }
